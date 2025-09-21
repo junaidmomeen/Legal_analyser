@@ -20,7 +20,7 @@ Frontend: React, Vite, Tailwind CSS
 Backend: Python, FastAPI, Uvicorn
 OCR / NLP: PyMuPDF, pytesseract, Google Generative AI
 Database (optional / configurable): PostgreSQL or MongoDB
-Deployment: Docker, Vercel, AWS (configurable)
+Deployment: Vercel, AWS (configurable)
 
 
 📂 Project Structure
@@ -45,7 +45,6 @@ Follow these steps to set up the project locally.
 Node.js v18+
 Python 3.10+
 pip & virtualenv
-(Optional) Docker
 🔧 Installation
 
 Clone the repository
