@@ -22,6 +22,8 @@ from services.ai_analyzer import AIAnalyzer
 from services.report_generator import ReportGenerator
 from models.analysis_models import AnalysisResult
 from utils.file_validator import FileValidator
+from middleware.rate_limiter import limiter
+from slowapi.errors import RateLimitExceeded
 
 # Load environment variables
 load_dotenv()
@@ -72,6 +74,8 @@ def setup_logging():
     )
 
     log_file = os.path.join("logs", "backend.log")
+    # Create logs directory if it doesn't exist
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(handler.formatter)
     logging.getLogger().addHandler(file_handler)
@@ -103,6 +107,8 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+app.state.limiter = limiter
+
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request.state.request_id = str(uuid.uuid4())
@@ -113,13 +119,28 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 app.add_middleware(RequestIDMiddleware)
 
 # CORS configuration
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(',')
+APP_ENV = os.getenv("APP_ENV", "development")
+allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
+allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',')]
+
+# In production, ensure that the allowed origins are explicitly set and not the default ones
+if APP_ENV == "production" and ("http://localhost:5173" in allowed_origins or "http://localhost:3000" in allowed_origins):
+    logger.warning("In production, but ALLOWED_ORIGINS is not set or is using default development values.")
+
+# Define allowed headers
+allowed_headers = [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "X-Request-ID",
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=allowed_headers,
 )
 
 # Initialize services
@@ -135,10 +156,18 @@ except Exception as e:
 
 # In-memory cache for analysis results
 analysis_cache: Dict[str, Dict[str, Any]] = {}
+analysis_lock = asyncio.Lock()
 analysis_semaphore = asyncio.Semaphore(MAX_CONCURRENT_ANALYSES)
 export_tasks: Dict[str, Dict[str, Any]] = {}
 
 # Custom exception handlers
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"error": "Rate limit exceeded", "message": str(exc.detail)}
+    )
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     request_id = getattr(request.state, "request_id", None)
@@ -193,6 +222,7 @@ async def cleanup_old_files():
             now = datetime.now()
             cutoff_time = now - timedelta(hours=CACHE_RETENTION_HOURS)
             
+            # Create a copy of the dictionary items to avoid a race condition
             for file_id, data in list(analysis_cache.items()):
                 try:
                     if data['timestamp'] < cutoff_time:
@@ -242,8 +272,8 @@ async def health_check(request: Request):
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
-                "status": "unhealthy",
-                "error": str(e),
+                "error": "Service Unavailable",
+                "message": f"Health check failed: {str(e)}",
                 "timestamp": datetime.now().isoformat()
             }
         )
@@ -276,6 +306,7 @@ async def get_supported_formats():
 # ---- (nothing else changed here) ----
 
 @app.post("/analyze")
+@limiter.limit("10/minute")
 async def analyze_document(request: Request, file: UploadFile = File(...)):
     request_id = request.state.request_id
     start_time = datetime.now()
@@ -417,16 +448,41 @@ async def get_stats():
 
 @app.get("/documents/{file_id}")
 async def get_document(file_id: str):
+    try:
+        # Validate that file_id is a legitimate UUID
+        uuid.UUID(file_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file_id format")
+
     if file_id not in analysis_cache:
-        raise HTTPException(status_code=404, detail="Document not found or expired")
-    
-    file_path = analysis_cache[file_id]["file_path"]
-    original_filename = analysis_cache[file_id]["original_filename"]
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Original document file not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found or expired")
+
+    file_path_str = analysis_cache[file_id].get("file_path")
+    if not file_path_str:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File path not found in cache")
+
+    # Security: Prevent path traversal attacks
+    try:
+        # Resolve the absolute path and ensure it's within the designated temporary storage
+        temp_storage_abs_path = Path(TEMP_STORAGE_PATH).resolve()
+        resolved_path = Path(file_path_str).resolve()
         
-    return FileResponse(path=file_path, filename=original_filename)
+        if not resolved_path.is_relative_to(temp_storage_abs_path):
+            logger.warning(f"Path traversal attempt detected for file_id: {file_id}", extra={"file_id": file_id})
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access to this resource is forbidden")
+            
+    except (ValueError, TypeError):
+        logger.error(f"Invalid file path encountered for file_id: {file_id}", extra={"file_id": file_id})
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid file path")
+
+
+    original_filename = analysis_cache[file_id].get("original_filename", "downloaded_file")
+
+    if not await aiofiles.os.path.exists(resolved_path):
+        logger.warning(f"Document file not found on disk for file_id: {file_id}", extra={"file_id": file_id})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Original document file not found on disk")
+
+    return FileResponse(path=resolved_path, filename=original_filename)
 
 async def run_export(file_id: str, format: str, task_id: str):
     cached_data = analysis_cache[file_id]
@@ -475,7 +531,7 @@ async def export_analysis(file_id: str, format: str, background_tasks: Backgroun
 async def get_export_status(task_id: str):
     if task_id not in export_tasks:
         raise HTTPException(
-            status_code=status.HTTP_44_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Export task not found"
         )
     
@@ -487,5 +543,18 @@ async def get_export_status(task_id: str):
             media_type="application/octet-stream",
             filename=os.path.basename(task["file_path"])
         )
+    elif task["status"] == "failed":
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "error": "Export Failed",
+                "message": "The export task failed. Please try again later."
+            }
+        )
     else:
         return {"status": task["status"]}
+
+if __name__ == "__main__":
+    # This block is crucial for Windows compatibility when using --reload
+    # It ensures that the Uvicorn server is only started when the script is executed directly
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

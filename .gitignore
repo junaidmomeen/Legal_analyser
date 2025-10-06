@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 .env
 .env.local
+
+# Backend
+backend/exports/
+backend/temp_uploads/

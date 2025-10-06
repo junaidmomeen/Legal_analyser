@@ -1,31 +1,36 @@
 import os
+import requests
 import logging
-import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions
+from openai import OpenAI
 from typing import List, Optional
 from models.analysis_models import AnalysisResult, KeyClause
 import json
 import asyncio
-from datetime import datetime
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 class AIAnalyzer:
-    """Service for AI-powered legal document analysis using Google Gemini with retry and fallback logic"""
+    """Service for AI-powered legal document analysis using OpenRouter with retry and fallback logic"""
 
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
-            raise ValueError("⚠ GEMINI_API_KEY not found in environment variables")
+            logger.critical("CRITICAL: OPENROUTER_API_KEY not found. The application cannot start without it.")
+            exit("OPENROUTER_API_KEY not set.")
         
-        # Configure Google Gemini
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-1.5-flash")  # Free tier model
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            default_headers={
+                "HTTP-Referer": "http://localhost:3000",
+                "X-Title": "Legal Analyser"
+            }
+        )
+        self.model = "openai/gpt-4o-mini"
         
         # Retry configuration
         self.max_retries = 3
-        self.retry_delay = 2  # seconds
+        self.retry_delay = int(os.getenv("RETRY_DELAY", "2"))  # seconds
         self.fallback_chunk_size = 8000  # characters for fallback mode
 
     def save_debug_output(self, raw_output: str, filename: str = None, status: str = "success") -> None:
@@ -113,43 +118,32 @@ class AIAnalyzer:
             confidence=0.0
         )
 
-    def analyze_with_gemini(self, prompt: str, attempt: int = 1) -> str:
-        """Make API call to Gemini with error handling"""
+    def analyze_with_openrouter(self, prompt: str, attempt: int = 1) -> str:
+        """Make API call to OpenRouter with error handling"""
         try:
-            logger.info(f"Making Gemini API call (attempt {attempt}/{self.max_retries})")
+            logger.info(f"Making OpenRouter API call (attempt {attempt}/{self.max_retries})")
             
-            # Add generation config for more reliable JSON output
-            generation_config = {
-                "temperature": 0.1,  # Lower temperature for more consistent output
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 8192,
-            }
-            
-            response = self.model.generate_content(
-                prompt,
-                generation_config=generation_config
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
             )
             
-            if not response or not response.text:
-                raise ValueError("Empty response from Gemini")
+            if not response or not response.choices:
+                raise ValueError("Empty response from OpenRouter")
             
-            return response.text.strip()
+            return response.choices[0].message.content.strip()
             
-        except google_exceptions.ResourceExhausted as e:
-            logger.error(f"Gemini API quota exceeded: {e}")
-            raise Exception("API quota exceeded. Please try again later.")
-        
-        except google_exceptions.InvalidArgument as e:
-            logger.error(f"Invalid request to Gemini API: {e}")
-            raise Exception("Invalid request format. Please try with a different document.")
-        
-        except google_exceptions.DeadlineExceeded as e:
-            logger.error(f"Gemini API timeout: {e}")
-            raise Exception("Request timeout. Please try again.")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"OpenRouter API request failed: {e}")
+            raise Exception("API request failed. Please try again later.")
         
         except Exception as e:
-            logger.error(f"Gemini API error (attempt {attempt}): {str(e)}")
+            logger.error(f"OpenRouter API error (attempt {attempt}): {str(e)}")
             raise
 
     async def analyze_document(
@@ -159,7 +153,7 @@ class AIAnalyzer:
         filename: str
     ) -> AnalysisResult:
         """
-        Analyze the document using Gemini AI with retry and fallback logic.
+        Analyze the document using OpenRouter AI with retry and fallback logic.
         Extracts summary + key clauses into structured format.
         """
         logger.info(f"Starting analysis for document: {filename} ({len(text)} chars)")
@@ -170,7 +164,7 @@ class AIAnalyzer:
         for attempt in range(1, self.max_retries + 1):
             try:
                 prompt = self.create_analysis_prompt(analysis_text)
-                raw_output = self.analyze_with_gemini(prompt, attempt)
+                raw_output = self.analyze_with_openrouter(prompt, attempt)
                 
                 # Save successful output for debugging
                 # self.save_debug_output(raw_output, f"success_{filename}_{attempt}.json", "success")
@@ -253,7 +247,7 @@ class AIAnalyzer:
             fallback_text = text[:self.fallback_chunk_size]
             prompt = self.create_analysis_prompt(fallback_text, is_fallback=True)
             
-            raw_output = self.analyze_with_gemini(prompt)
+            raw_output = self.analyze_with_openrouter(prompt)
             # self.save_debug_output(raw_output, f"fallback_{filename}.json", "fallback")
             
             # Simple parsing for fallback

@@ -53,7 +53,7 @@ class ReportGenerator:
         # Initialize custom styles
         self.styles = self._create_custom_styles()
 
-    def _create_custom_styles(self):
+    def _create_custom_styles(self) -> Dict[str, ParagraphStyle]:
         """Create custom paragraph styles for the report"""
         base_styles = getSampleStyleSheet()
         
@@ -135,7 +135,7 @@ class ReportGenerator:
             text = re.sub(r'\b({keyword})\b', r'<b>\1</b>', text, flags=re.IGNORECASE)
         return text
 
-    def export_as_json(self, analysis: dict, original_filename: str) -> str:
+    def export_as_json(self, analysis: Dict[str, Any], original_filename: str) -> str:
         """Export the analysis result as JSON with enhanced metadata"""
         try:
             # Add export metadata
@@ -161,7 +161,7 @@ class ReportGenerator:
             logger.error(f"JSON export failed: {e}")
             raise
 
-    def export_as_pdf(self, analysis: dict, original_filename: str) -> str:
+    def export_as_pdf(self, analysis: Dict[str, Any], original_filename: str) -> str:
         """Export the analysis result as a comprehensive PDF report"""
         try:
             file_path = f"exports/{self._sanitize_filename(original_filename)}_report.pdf"
@@ -193,7 +193,7 @@ class ReportGenerator:
             logger.error(f"PDF export failed: {e}")
             raise
 
-    def _build_header_section(self, analysis: dict, original_filename: str) -> List:
+    def _build_header_section(self, analysis: Dict[str, Any], original_filename: str) -> List[Any]:
         """Build the report header with title and document info"""
         elements = []
         
@@ -227,7 +227,7 @@ class ReportGenerator:
         
         return elements
 
-    def _build_executive_summary(self, analysis: dict) -> List:
+    def _build_executive_summary(self, analysis: Dict[str, Any]) -> List[Any]:
         """Build executive summary section with key insights"""
         elements = []
         
@@ -261,7 +261,7 @@ class ReportGenerator:
         
         return elements
 
-    def _build_metadata_section(self, analysis: dict) -> List:
+    def _build_metadata_section(self, analysis: Dict[str, Any]) -> List[Any]:
         """Build document metadata and statistics section"""
         elements = []
         
@@ -298,7 +298,7 @@ class ReportGenerator:
         
         return elements
 
-    def _build_visual_insights_section(self, analysis: dict) -> List:
+    def _build_visual_insights_section(self, analysis: Dict[str, Any]) -> List[Any]:
         """Build visual insights section with charts"""
         elements = []
         
@@ -339,7 +339,7 @@ class ReportGenerator:
         
         return elements
 
-    def _build_key_clauses_section(self, analysis: dict) -> List:
+    def _build_key_clauses_section(self, analysis: Dict[str, Any]) -> List[Any]:
         """Build detailed key clauses section"""
         elements = []
         
@@ -405,7 +405,7 @@ class ReportGenerator:
         
         return elements
 
-    def _build_risk_assessment_section(self, analysis: dict) -> List:
+    def _build_risk_assessment_section(self, analysis: Dict[str, Any]) -> List[Any]:
         """Build risk assessment section"""
         elements = []
         
@@ -433,7 +433,7 @@ class ReportGenerator:
         elements.append(Spacer(1, 20))
         return elements
 
-    def _build_appendix_section(self, analysis: dict) -> List:
+    def _build_appendix_section(self, analysis: Dict[str, Any]) -> List[Any]:
         """Build appendix with technical details"""
         elements = []
         
@@ -472,7 +472,7 @@ class ReportGenerator:
         
         return elements
 
-    def _create_gauge_chart(self, value, min_val, max_val, width, height):
+    def _create_gauge_chart(self, value: float, min_val: int, max_val: int, width: int, height: int) -> Drawing:
         d = Drawing(width, height)
         # Background
         d.add(Rect(0, 0, width, height, fillColor=colors.lightgrey, strokeColor=None))
@@ -488,13 +488,13 @@ class ReportGenerator:
         d.add(String(width / 2, height / 2, f'{value:.2f}', textAnchor='middle', fillColor=colors.white))
         return d
 
-    def _calculate_average_risk_score(self, clauses: List[dict]) -> Optional[float]:
+    def _calculate_average_risk_score(self, clauses: List[Dict[str, Any]]) -> Optional[float]:
         risk_scores = [clause.get('risk_score', 0) for clause in clauses]
         if not risk_scores:
             return None
         return statistics.mean(risk_scores)
 
-    def _create_importance_pie_chart(self, clauses: List[dict]) -> Drawing:
+    def _create_importance_pie_chart(self, clauses: List[Dict[str, Any]]) -> Optional[Drawing]:
         """Create pie chart for clause importance distribution"""
         try:
             # Count importance levels
@@ -556,7 +556,7 @@ class ReportGenerator:
             logger.error(f"Pie chart creation failed: {e}")
             return None
 
-    def _create_clause_type_bar_chart(self, clauses: List[dict]) -> Drawing:
+    def _create_clause_type_bar_chart(self, clauses: List[Dict[str, Any]]) -> Optional[Drawing]:
         """Create bar chart for clause types distribution"""
         try:
             # Count clause types
@@ -598,7 +598,7 @@ class ReportGenerator:
             logger.error(f"Bar chart creation failed: {e}")
             return None
 
-    def _generate_statistics(self, analysis: dict) -> dict:
+    def _generate_statistics(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Generate statistical summary of the analysis"""
         clauses = analysis.get('key_clauses', [])
         
@@ -621,7 +621,7 @@ class ReportGenerator:
             'unique_types': len(type_counts)
         }
 
-    def _generate_key_insights(self, analysis: dict) -> List[str]:
+    def _generate_key_insights(self, analysis: Dict[str, Any]) -> List[str]:
         """Generate key insights from the analysis"""
         insights = []
         clauses = analysis.get('key_clauses', [])
@@ -667,12 +667,12 @@ class ReportGenerator:
 
 
 # Convenience functions for backward compatibility
-def export_as_json(analysis: dict, original_filename: str) -> StreamingResponse:
+def export_as_json(analysis: Dict[str, Any], original_filename: str) -> str:
     """Export analysis as JSON (backward compatibility)"""
     generator = ReportGenerator()
     return generator.export_as_json(analysis, original_filename)
 
-def export_as_pdf(analysis: dict, original_filename: str) -> StreamingResponse:
+def export_as_pdf(analysis: Dict[str, Any], original_filename: str) -> str:
     """Export analysis as PDF (backward compatibility)"""
     generator = ReportGenerator()
     return generator.export_as_pdf(analysis, original_filename)

@@ -87,6 +87,34 @@ class FileValidator:
                     error_message=f"Invalid file type: {mime_type}. Supported types are: {', '.join(self.allowed_mime_types)}"
                 )
 
+            # Check if the extension matches the MIME type
+            if file_extension == ".pdf" and mime_type != "application/pdf":
+                return FileValidationResult(
+                    is_valid=False,
+                    file_type="unknown",
+                    file_extension=file_extension,
+                    file_size=file_size,
+                    error_message=f"File extension '{file_extension}' does not match MIME type '{mime_type}'"
+                )
+            
+            if file_extension in {".jpg", ".jpeg"} and mime_type != "image/jpeg":
+                return FileValidationResult(
+                    is_valid=False,
+                    file_type="unknown",
+                    file_extension=file_extension,
+                    file_size=file_size,
+                    error_message=f"File extension '{file_extension}' does not match MIME type '{mime_type}'"
+                )
+
+            if file_extension == ".png" and mime_type != "image/png":
+                return FileValidationResult(
+                    is_valid=False,
+                    file_type="unknown",
+                    file_extension=file_extension,
+                    file_size=file_size,
+                    error_message=f"File extension '{file_extension}' does not match MIME type '{mime_type}'"
+                )
+
             file_type = "pdf" if "pdf" in mime_type else "image"
             
             return FileValidationResult(

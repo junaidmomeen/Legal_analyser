@@ -172,9 +172,6 @@ class DocumentProcessor:
                     logger.error(f"Error processing page {page_num + 1}: {page_error}")
                     extracted_text += f"\n--- Page {page_num + 1} ---\n[Error extracting text from this page]\n"
             
-            doc.close()
-            doc = None
-            
             word_count = len(extracted_text.split())
             
             # Add processing notes
@@ -193,10 +190,11 @@ class DocumentProcessor:
             )
             
         except Exception as e:
-            if doc:
-                doc.close()
             logger.error(f"Error processing PDF: {str(e)}")
             raise
+        finally:
+            if doc:
+                doc.close()
     
     async def _ocr_pdf_page(self, page) -> str:
         """Extract text from PDF page using OCR"""
