@@ -222,22 +222,23 @@ async def cleanup_old_files():
             now = datetime.now()
             cutoff_time = now - timedelta(hours=CACHE_RETENTION_HOURS)
             
-            # Create a copy of the dictionary items to avoid a race condition
-            for file_id, data in list(analysis_cache.items()):
-                try:
-                    if data['timestamp'] < cutoff_time:
-                        file_path = data.get('file_path')
-                        if file_path:
-                            try:
-                                await aiofiles.os.stat(file_path)
-                                await aiofiles.os.remove(file_path)
-                            except FileNotFoundError:
-                                pass
-                        del analysis_cache[file_id]
-                        cleanup_count += 1
-                except Exception as e:
-                    logger.error(f"Error cleaning up file {file_id}: {e}", 
-                               extra={"error_type": "cleanup_error", "file_id": file_id})
+            async with analysis_lock:
+                # Create a copy of the dictionary items to avoid a race condition
+                for file_id, data in list(analysis_cache.items()):
+                    try:
+                        if data['timestamp'] < cutoff_time:
+                            file_path = data.get('file_path')
+                            if file_path:
+                                try:
+                                    await aiofiles.os.stat(file_path)
+                                    await aiofiles.os.remove(file_path)
+                                except FileNotFoundError:
+                                    pass
+                            del analysis_cache[file_id]
+                            cleanup_count += 1
+                    except Exception as e:
+                        logger.error(f"Error cleaning up file {file_id}: {e}", 
+                                   extra={"error_type": "cleanup_error", "file_id": file_id})
             
             logger.info(f"Cleanup completed: {cleanup_count} files removed", 
                        extra={"cleanup_count": cleanup_count})
