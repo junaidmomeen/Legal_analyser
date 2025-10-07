@@ -15,6 +15,7 @@ import uuid
 import shutil
 import asyncio
 from pathlib import Path
+import aiofiles
 import aiofiles.os
 
 from services.document_processor import DocumentProcessor
