@@ -227,8 +227,12 @@ async def cleanup_old_files():
                 try:
                     if data['timestamp'] < cutoff_time:
                         file_path = data.get('file_path')
-                        if file_path and await aiofiles.os.path.exists(file_path):
-                            await aiofiles.os.remove(file_path)
+                        if file_path:
+                            try:
+                                await aiofiles.os.stat(file_path)
+                                await aiofiles.os.remove(file_path)
+                            except FileNotFoundError:
+                                pass
                         del analysis_cache[file_id]
                         cleanup_count += 1
                 except Exception as e:
@@ -421,10 +425,11 @@ async def analyze_document(request: Request, file: UploadFile = File(...)):
                 "error_type": "analysis_error",
                 "request_id": request_id
             })
-            if temp_file_path and await aiofiles.os.path.exists(temp_file_path):
+            if temp_file_path:
                 try:
+                    await aiofiles.os.stat(temp_file_path)
                     await aiofiles.os.remove(temp_file_path)
-                except:
+                except FileNotFoundError:
                     pass
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -478,7 +483,9 @@ async def get_document(file_id: str):
 
     original_filename = analysis_cache[file_id].get("original_filename", "downloaded_file")
 
-    if not await aiofiles.os.path.exists(resolved_path):
+    try:
+        await aiofiles.os.stat(resolved_path)
+    except FileNotFoundError:
         logger.warning(f"Document file not found on disk for file_id: {file_id}", extra={"file_id": file_id})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Original document file not found on disk")
 
