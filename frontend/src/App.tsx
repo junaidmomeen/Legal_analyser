@@ -4,7 +4,7 @@ import FileUpload from './components/FileUpload';
 import Dashboard from './components/Dashboard';
 import AnalysisReportSkeleton from './components/AnalysisReportSkeleton';
 import ConfirmationDialog from './components/ConfirmationDialog';
-import { analyzeDocument, exportAnalysis, viewOriginalDocument, getSupportedFormats, AnalysisResult, SupportedFormats, ApiError } from './api/api';
+import { analyzeDocument, exportAnalysis, viewOriginalDocument, getSupportedFormats, AnalysisResult, SupportedFormats, ApiError, clearHistory } from './api/api';
 
 const Header = () => (
   <header className="bg-base-200/80 backdrop-blur-lg sticky top-0 z-10 border-b border-base-300">
@@ -108,7 +108,7 @@ function App() {
     }
   };
 
-  const handleReset = () => {
+  const handleClearHistory = () => {
     if (analysis) {
       setShowConfirmation(true);
     } else {
@@ -116,7 +116,13 @@ function App() {
     }
   };
 
-  const reset = () => {
+  const reset = async () => {
+    try {
+      await clearHistory();
+    } catch (error) {
+      console.error("Failed to clear history:", error);
+      setError({ message: "Failed to clear history. Please try again later." });
+    }
     setSelectedFile(null);
     setAnalysis(null);
     setError(null);
@@ -135,7 +141,8 @@ function App() {
             analysis={analysis}
             onExport={handleExport}
             onViewOriginal={handleViewOriginal}
-            onReset={handleReset}
+            onClearHistory={handleClearHistory}
+            onReset={reset}
             selectedFile={selectedFile}
           />
         ) : (

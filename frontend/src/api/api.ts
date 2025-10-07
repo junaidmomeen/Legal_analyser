@@ -67,33 +67,49 @@ export const analyzeDocument = async (file: File, onUploadProgress: (progress: n
   }
 };
 
-export const exportAnalysis = async (fileId: string, format: 'pdf' | 'json') => {
+export const exportAnalysis = async (fileId: string, format: 'pdf' | 'json', options: { timeout?: number } = {}) => {
+  const { timeout = 120000 } = options; // 2-minute timeout
+  const startTime = Date.now();
+
   const startExportResponse = await apiClient.post<{ task_id: string }>(`/export/${fileId}/${format}`);
   const taskId = startExportResponse.data.task_id;
 
-  while (true) {
-    const pollResponse = await apiClient.get(`/export/${taskId}`, { responseType: 'blob' });
+  while (Date.now() - startTime < timeout) {
+    try {
+      const pollResponse = await apiClient.get(`/export/${taskId}`, { responseType: 'blob' });
 
-    if (pollResponse.headers['content-type'] === 'application/json') {
-      const responseText = await (pollResponse.data as Blob).text();
-      const statusResponse = JSON.parse(responseText);
+      if (pollResponse.headers['content-type'] === 'application/json') {
+        const responseText = await (pollResponse.data as Blob).text();
+        const statusResponse = JSON.parse(responseText);
 
-      if (statusResponse.status === 'processing') {
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        if (statusResponse.status === 'processing') {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        } else {
+          throw new Error(`Export failed with status: ${statusResponse.status || 'unknown'}`);
+        }
       } else {
-        throw new Error('Export failed');
+        const url = window.URL.createObjectURL(new Blob([pollResponse.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `analysis-report.${format}`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url); // Clean up blob URL
+        return;
       }
-    } else {
-      const url = window.URL.createObjectURL(new Blob([pollResponse.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `analysis-report.${format}`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      return;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const errorMessage = error.response?.data?.detail || error.message;
+        console.error(`Polling error for export: ${errorMessage}`, error);
+        throw new Error(`Failed to get export status: ${errorMessage}`);
+      }
+      // Re-throw other errors, including the one from "Export failed with status"
+      throw error;
     }
   }
+
+  throw new Error(`Export process timed out after ${timeout / 1000} seconds.`);
 };
 
 export const viewOriginalDocument = async (fileId: string) => {
@@ -106,3 +122,19 @@ export const getSupportedFormats = async (): Promise<SupportedFormats> => {
   const response = await apiClient.get<SupportedFormats>('/supported-formats');
   return response.data;
 };
+
+export const clearHistory = async (): Promise<{ message: string }> => {
+    try {
+      const response = await apiClient.delete('/analyses');
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        throw { 
+          message: error.response.data.detail || 'Failed to clear history.', 
+          status: error.response.status,
+          details: error.response.data
+        } as ApiError;
+      }
+      throw { message: 'Failed to clear history.' } as ApiError;
+    }
+  };

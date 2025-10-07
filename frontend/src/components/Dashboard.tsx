@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Download, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Download, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import Card from './Card';
 import Button from './Button';
 
@@ -27,6 +27,7 @@ interface DashboardProps {
   onExport: (format: 'pdf' | 'json') => void;
   onViewOriginal: () => void;
   onReset: () => void;
+  onClearHistory: () => void;
   selectedFile: File | null;
 }
 
@@ -70,7 +71,7 @@ const ClauseCard = ({ clause }: { clause: KeyClause }) => {
   );
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ analysis, onExport, onViewOriginal, onReset, selectedFile }) => {
+const Dashboard: React.FC<DashboardProps> = ({ analysis, onExport, onViewOriginal, onReset, onClearHistory, selectedFile }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [importanceFilter, setImportanceFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
 
@@ -118,7 +119,8 @@ const Dashboard: React.FC<DashboardProps> = ({ analysis, onExport, onViewOrigina
               <Button onClick={() => onExport('pdf')} variant="primary"><Download className="h-4 w-4" /><span>Export PDF</span></Button>
               <Button onClick={() => onExport('json')} variant="secondary"><Download className="h-4 w-4" /><span>Export JSON</span></Button>
               <Button onClick={onViewOriginal} variant="tertiary"><span>View Original Document</span></Button>
-              <Button onClick={onReset} variant="danger"><span>Start New Analysis</span></Button>
+              <Button onClick={onReset} variant="primary"><span>New Analysis</span></Button>
+              <Button onClick={onClearHistory} variant="danger"><Trash2 className="h-4 w-4" /><span>Clear History</span></Button>
             </div>
           </Card>
         </div>

@@ -1,5 +1,5 @@
 import os
-import requests
+import httpx
 import logging
 from openai import OpenAI
 from typing import List, Optional
@@ -138,7 +138,7 @@ class AIAnalyzer:
             
             return response.choices[0].message.content.strip()
             
-        except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             logger.error(f"OpenRouter API request failed: {e}")
             raise Exception("API request failed. Please try again later.")
         

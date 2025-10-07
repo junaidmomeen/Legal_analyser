@@ -453,6 +453,36 @@ async def get_stats():
         "active_analyses": MAX_CONCURRENT_ANALYSES - analysis_semaphore._value,
     }
 
+@app.delete("/analyses")
+async def clear_analyses(request: Request):
+    request_id = request.state.request_id
+    logger.info("Clear analyses request received", extra={"request_id": request_id})
+    
+    async with analysis_lock:
+        cleared_count = len(analysis_cache)
+        # Create a copy of the dictionary items to avoid a race condition
+        for file_id, data in list(analysis_cache.items()):
+            try:
+                file_path = data.get('file_path')
+                if file_path:
+                    try:
+                        await aiofiles.os.stat(file_path)
+                        await aiofiles.os.remove(file_path)
+                    except FileNotFoundError:
+                        pass
+            except Exception as e:
+                logger.error(f"Error cleaning up file {file_id}: {e}", 
+                           extra={"error_type": "cleanup_error", "file_id": file_id})
+        
+        analysis_cache.clear()
+        export_tasks.clear()
+
+    logger.info(f"All analyses cleared: {cleared_count} items removed", 
+               extra={"cleared_count": cleared_count, "request_id": request_id})
+    
+    return {"message": f"Successfully cleared {cleared_count} analysis records."}
+
+
 @app.get("/documents/{file_id}")
 async def get_document(file_id: str):
     try:
