@@ -8,8 +8,8 @@ import asyncio
 
 @pytest.fixture
 def ai_analyzer():
-    with patch.dict(os.environ, {"GEMINI_API_KEY": "test_key"}):
-        with patch('google.generativeai.GenerativeModel') as mock_model:
+    with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test_key"}):
+        with patch('openai.OpenAI') as mock_openai_client:
             return AIAnalyzer()
 
 @pytest.mark.asyncio
@@ -31,15 +31,14 @@ async def test_analyze_document_success(ai_analyzer):
         "confidence": 0.9
     }
 
-    mock_gemini_response = MagicMock()
-    mock_gemini_response.text = json.dumps(mock_response_data)
-    ai_analyzer.model.generate_content.return_value = mock_gemini_response
+    mock_chat_completion = MagicMock()
+    mock_chat_completion.choices = [MagicMock()]
+    mock_chat_completion.choices[0].message.content = json.dumps(mock_response_data)
+    ai_analyzer.client.chat.completions.create.return_value = mock_chat_completion
 
     result = await ai_analyzer.analyze_document(
         text="This is a test document.",
-        document_type="Test Document",
-        filename="test.pdf",
-        total_pages=1
+        filename="test.pdf"
     )
 
     assert isinstance(result, AnalysisResult)
@@ -49,14 +48,12 @@ async def test_analyze_document_success(ai_analyzer):
 
 @pytest.mark.asyncio
 async def test_analyze_document_fallback(ai_analyzer):
-    ai_analyzer.model.generate_content.side_effect = Exception("API Error")
+    ai_analyzer.client.chat.completions.create.side_effect = Exception("API Error")
 
     with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
         result = await ai_analyzer.analyze_document(
             text="This is a test document.",
-            document_type="Test Document",
-            filename="test.pdf",
-            total_pages=1
+            filename="test.pdf"
         )
         assert mock_sleep.await_count > 0
 

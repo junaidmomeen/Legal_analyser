@@ -442,7 +442,7 @@ class ReportGenerator:
         
         # Technical details
         tech_details = [
-            ["Analysis Engine", "Google Gemini AI"],
+            ["Analysis Engine", "OpenRouter (GPT-4-mini)"],
             ["Processing Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")],
             ["Confidence Score", f"{analysis.get('confidence', 0):.3f}"],
             ["Total Clauses Processed", str(len(analysis.get('key_clauses', [])))],
