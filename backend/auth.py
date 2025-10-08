@@ -56,6 +56,15 @@ async def enforce_content_length_limit(request: Request) -> None:
     if content_length is None:
         return
 
+    try:
+        if int(content_length) > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Request too large. Max {max_mb:.0f}MB"
+            )
+    except ValueError:
+        return
+
 
 def create_signed_url_token(resource_id: str, expires_in_seconds: int = 300) -> str:
     """Create a short-lived token for signed URL downloads."""
@@ -68,14 +77,5 @@ def verify_signed_url_token(token: str, resource_id: str) -> bool:
         return payload.get("sub") == f"resource:{resource_id}"
     except Exception:
         return False
-    try:
-        if int(content_length) > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Request too large. Max {max_mb:.0f}MB"
-            )
-    except ValueError:
-        # Ignore invalid header; later validators will catch actual size
-        return
 
 
