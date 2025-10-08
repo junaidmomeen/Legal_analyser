@@ -1,31 +1,20 @@
 import os
 import httpx
 import logging
-from openai import OpenAI
 from typing import List, Optional
 from models.analysis_models import AnalysisResult, KeyClause
 import json
 import asyncio
+from services.ai_provider import OpenRouterProvider, AIProvider
+from utils.circuit_breaker import circuit_breaker, circuit_manager
 
 logger = logging.getLogger(__name__)
 
 class AIAnalyzer:
     """Service for AI-powered legal document analysis using OpenRouter with retry and fallback logic"""
 
-    def __init__(self):
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
-            logger.critical("CRITICAL: OPENROUTER_API_KEY not found. The application cannot start without it.")
-            exit("OPENROUTER_API_KEY not set.")
-        
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
-            default_headers={
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "Legal Analyser"
-            }
-        )
+    def __init__(self, provider: Optional[AIProvider] = None):
+        self.provider: AIProvider = provider or OpenRouterProvider()
         self.model = "openai/gpt-4o-mini"
         
         # Retry configuration
@@ -72,7 +61,30 @@ class AIAnalyzer:
         Read the following text and return a structured JSON object with:
 
         {
-          "summary": "A detailed, easy-to-understand summary of the document's purpose, key obligations, and potential risks. Write in simple terms for a non-lawyer to understand.",
+          "summary": {
+            "overview": "A brief 2-3 sentence overview of what this document is about and its main purpose",
+            "key_points": [
+              "• First key point in simple language",
+              "• Second important point explained clearly", 
+              "• Third critical aspect to understand",
+              "• Fourth key consideration"
+            ],
+            "obligations": [
+              "• Main obligation or requirement 1",
+              "• Main obligation or requirement 2",
+              "• Main obligation or requirement 3"
+            ],
+            "risks": [
+              "• Primary risk or concern 1",
+              "• Primary risk or concern 2", 
+              "• Primary risk or concern 3"
+            ],
+            "recommendations": [
+              "• Key recommendation or action item 1",
+              "• Key recommendation or action item 2",
+              "• Key recommendation or action item 3"
+            ]
+          },
           "key_clauses": [
             {
               "type": "Clause type (e.g., Payment Terms, Termination, Confidentiality)",
@@ -90,8 +102,11 @@ class AIAnalyzer:
         IMPORTANT: 
         - ONLY return valid JSON
         - Do not include explanations or markdown
+        - Write all summary content in simple, easy-to-understand language for non-lawyers
+        - Make bullet points specific and actionable
         - If text is truncated, focus on the most important clauses
         - Ensure all JSON keys are present
+        - Keep summary points concise but informative (2-4 items per section)
         """
         
         if is_fallback:
@@ -118,25 +133,18 @@ class AIAnalyzer:
             confidence=0.0
         )
 
+    @circuit_breaker(
+        name="openrouter_api",
+        failure_threshold=3,
+        recovery_timeout=120.0,
+        expected_exception=(httpx.RequestError, httpx.HTTPStatusError, Exception)
+    )
     def analyze_with_openrouter(self, prompt: str, attempt: int = 1) -> str:
-        """Make API call to OpenRouter with error handling"""
+        """Make API call to OpenRouter with circuit breaker protection"""
         try:
             logger.info(f"Making OpenRouter API call (attempt {attempt}/{self.max_retries})")
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-            )
-            
-            if not response or not response.choices:
-                raise ValueError("Empty response from OpenRouter")
-            
-            return response.choices[0].message.content.strip()
+            return self.provider.generate(prompt, self.model)
             
         except httpx.RequestError as e:
             logger.error(f"OpenRouter API request failed: {e}")
@@ -149,8 +157,8 @@ class AIAnalyzer:
     async def analyze_document(
         self,
         text: str,
-        document_type: str,
-        filename: str
+        document_type: str = "",
+        filename: str = ""
     ) -> AnalysisResult:
         """
         Analyze the document using OpenRouter AI with retry and fallback logic.
@@ -194,8 +202,17 @@ class AIAnalyzer:
                         )
                     )
                 
+                # Handle both old and new summary formats
+                summary_data = data.get("summary", "No summary provided.")
+                if isinstance(summary_data, dict):
+                    # New structured format - convert to JSON string for frontend
+                    summary_json = json.dumps(summary_data)
+                else:
+                    # Old string format - keep as is for backward compatibility
+                    summary_json = summary_data
+                
                 result = AnalysisResult(
-                    summary=data.get("summary", "No summary provided."),
+                    summary=summary_json,
                     key_clauses=key_clauses,
                     document_type=data.get("document_type", document_type or "Legal Document"),
                     confidence=min(float(data.get("confidence", 0.8)), 0.98)
@@ -288,8 +305,18 @@ class AIAnalyzer:
                     )
                 )
             
+            # Handle both old and new summary formats for fallback
+            summary_data = data.get("summary", "Limited analysis completed.")
+            if isinstance(summary_data, dict):
+                # Add fallback prefix to overview if it's a structured summary
+                if "overview" in summary_data:
+                    summary_data["overview"] = f"[Partial Analysis] {summary_data['overview']}"
+                summary_json = json.dumps(summary_data)
+            else:
+                summary_json = f"[Partial Analysis] {summary_data}"
+            
             result = AnalysisResult(
-                summary=f"[Partial Analysis] {data.get('summary', 'Limited analysis completed.')}",
+                summary=summary_json,
                 key_clauses=key_clauses,
                 document_type=data.get("document_type", document_type),
                 confidence=min(float(data.get("confidence", 0.6)), 0.7)  # Cap fallback confidence

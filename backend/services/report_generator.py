@@ -132,7 +132,8 @@ class ReportGenerator:
     def _bold_keywords(self, text: str) -> str:
         keywords = ['Termination', 'Payment', 'Confidentiality']
         for keyword in keywords:
-            text = re.sub(r'\b({keyword})\b', r'<b>\1</b>', text, flags=re.IGNORECASE)
+            pattern = rf"\b({re.escape(keyword)})\b"
+            text = re.sub(pattern, r'<b>\1</b>', text, flags=re.IGNORECASE)
         return text
 
     def export_as_json(self, analysis: Dict[str, Any], original_filename: str) -> str:

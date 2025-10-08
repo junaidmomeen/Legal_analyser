@@ -6,6 +6,38 @@ const apiClient = axios.create({
   baseURL: API_URL,
 });
 
+// Get demo token for development
+const getDemoToken = async (): Promise<string> => {
+  const cachedToken = localStorage.getItem('auth_token');
+  if (cachedToken) {
+    return cachedToken;
+  }
+  
+  try {
+    const response = await axios.post(`${API_URL}/demo-token`);
+    const token = response.data.access_token;
+    localStorage.setItem('auth_token', token);
+    return token;
+  } catch (error) {
+    console.error('Failed to get demo token:', error);
+    throw error;
+  }
+};
+
+// Add authentication interceptor
+apiClient.interceptors.request.use(async (config) => {
+  try {
+    const token = await getDemoToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  } catch (error) {
+    console.error('Authentication error:', error);
+  }
+  
+  return config;
+});
+
 export interface ApiError {
   message: string;
   status?: number;
@@ -71,45 +103,58 @@ export const exportAnalysis = async (fileId: string, format: 'pdf' | 'json', opt
   const { timeout = 120000 } = options; // 2-minute timeout
   const startTime = Date.now();
 
-  const startExportResponse = await apiClient.post<{ task_id: string }>(`/export/${fileId}/${format}`);
-  const taskId = startExportResponse.data.task_id;
+  try {
+    // Start the export task
+    const startExportResponse = await apiClient.post<{ task_id: string }>(`/export/${fileId}/${format}`);
+    const taskId = startExportResponse.data.task_id;
 
-  while (Date.now() - startTime < timeout) {
-    try {
-      const pollResponse = await apiClient.get(`/export/${taskId}`, { responseType: 'blob' });
+    // Poll for completion
+    while (Date.now() - startTime < timeout) {
+      try {
+        const pollResponse = await apiClient.get(`/export/${taskId}`);
 
-      if (pollResponse.headers['content-type'] === 'application/json') {
-        const responseText = await (pollResponse.data as Blob).text();
-        const statusResponse = JSON.parse(responseText);
+        if (pollResponse.data.status === 'ready') {
+          // Get the download URL with token
+          const downloadResponse = await apiClient.get(`/export/${taskId}/download`, {
+            params: { token: pollResponse.data.download_token },
+            responseType: 'blob'
+          });
 
-        if (statusResponse.status === 'processing') {
+          // Download the file
+          const url = window.URL.createObjectURL(new Blob([downloadResponse.data]));
+          const link = document.createElement('a');
+          link.href = url;
+          link.setAttribute('download', `analysis-report.${format}`);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.URL.revokeObjectURL(url);
+          return;
+
+        } else if (pollResponse.data.status === 'failed') {
+          throw new Error('Export task failed');
+        } else if (pollResponse.data.status === 'processing') {
           await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
         } else {
-          throw new Error(`Export failed with status: ${statusResponse.status || 'unknown'}`);
+          throw new Error(`Unknown export status: ${pollResponse.data.status}`);
         }
-      } else {
-        const url = window.URL.createObjectURL(new Blob([pollResponse.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `analysis-report.${format}`);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url); // Clean up blob URL
-        return;
+      } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          throw new Error('Export task not found');
+        }
+        throw error;
       }
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const errorMessage = error.response?.data?.detail || error.message;
-        console.error(`Polling error for export: ${errorMessage}`, error);
-        throw new Error(`Failed to get export status: ${errorMessage}`);
-      }
-      // Re-throw other errors, including the one from "Export failed with status"
-      throw error;
     }
-  }
 
-  throw new Error(`Export process timed out after ${timeout / 1000} seconds.`);
+    throw new Error(`Export process timed out after ${timeout / 1000} seconds.`);
+  } catch (error) {
+    console.error('Export error:', error);
+    if (axios.isAxiosError(error)) {
+      const errorMessage = error.response?.data?.detail || error.message;
+      throw new Error(`Export failed: ${errorMessage}`);
+    }
+    throw error;
+  }
 };
 
 export const viewOriginalDocument = async (fileId: string) => {

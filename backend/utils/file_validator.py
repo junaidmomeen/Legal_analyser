@@ -14,6 +14,9 @@ class FileValidator:
     
     def __init__(self):
         self.max_file_size = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+        # Additional early limits
+        self.max_pdf_pages = int(os.getenv("MAX_PDF_PAGES", "100")) if hasattr(os, "getenv") else 100
+        self.max_image_dimension = int(os.getenv("MAX_IMAGE_DIMENSION", "5000")) if hasattr(os, "getenv") else 5000
         self.allowed_extensions: Set[str] = set(settings.ALLOWED_EXTENSIONS)
         self.allowed_mime_types: Set[str] = {
             'application/pdf',
@@ -25,7 +28,7 @@ class FileValidator:
     
     async def validate_file(self, file: UploadFile) -> FileValidationResult:
         """
-        Validate an uploaded file
+        Validate an uploaded file with enhanced security checks
         
         Args:
             file: The uploaded file to validate
@@ -34,6 +37,7 @@ class FileValidator:
             FileValidationResult: Validation result with details
         """
         try:
+            # Check filename exists and is safe
             if not file.filename:
                 return FileValidationResult(
                     is_valid=False,
@@ -41,6 +45,17 @@ class FileValidator:
                     file_extension="",
                     file_size=0,
                     error_message="No filename provided"
+                )
+            
+            # Sanitize filename to prevent path traversal
+            filename = self._sanitize_filename(file.filename)
+            if not filename:
+                return FileValidationResult(
+                    is_valid=False,
+                    file_type="unknown",
+                    file_extension="",
+                    file_size=0,
+                    error_message="Invalid filename"
                 )
             
             file_extension = os.path.splitext(file.filename)[1].lower()
@@ -117,6 +132,40 @@ class FileValidator:
 
             file_type = "pdf" if "pdf" in mime_type else "image"
             
+            # Validate file content matches expected type
+            if not self._validate_file_content(content, file_type):
+                return FileValidationResult(
+                    is_valid=False,
+                    file_type=file_type,
+                    file_extension=file_extension,
+                    file_size=file_size,
+                    error_message=f"File content does not match expected {file_type} format"
+                )
+
+            # Early structural checks (best-effort without expensive parsing)
+            if file_type == "pdf":
+                # Quick page count heuristic: count 'Page' markers or XRef sections is unreliable; rely on downstream
+                # Here we only block zero-length or absurdly large declared size already handled above
+                pass
+            else:
+                # For images, attempt a cheap dimension check using PIL if available
+                try:
+                    from PIL import Image
+                    import io as _io
+                    with Image.open(_io.BytesIO(content)) as img:
+                        w, h = img.size
+                        if w > self.max_image_dimension or h > self.max_image_dimension:
+                            return FileValidationResult(
+                                is_valid=False,
+                                file_type=file_type,
+                                file_extension=file_extension,
+                                file_size=file_size,
+                                error_message=f"Image dimensions too large: {w}x{h}px. Max is {self.max_image_dimension}px"
+                            )
+                except Exception:
+                    # If PIL fails, let downstream processing handle
+                    pass
+            
             return FileValidationResult(
                 is_valid=True,
                 file_type=file_type,
@@ -139,6 +188,52 @@ class FileValidator:
     
     def get_allowed_extensions(self) -> Set[str]:
         return self.allowed_extensions.copy()
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename to prevent path traversal attacks"""
+        import re
+        
+        # Remove any path components
+        filename = os.path.basename(filename)
+        
+        # Remove null bytes and control characters
+        filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename)
+        
+        # Remove dangerous characters
+        dangerous_chars = r'[<>:"/\\|?*\x00-\x1f\x7f-\x9f]'
+        filename = re.sub(dangerous_chars, '', filename)
+        
+        # Limit filename length
+        if len(filename) > 255:
+            name, ext = os.path.splitext(filename)
+            filename = name[:255-len(ext)] + ext
+        
+        # Ensure filename is not empty or just dots
+        if not filename or filename in ['.', '..'] or filename.startswith('.'):
+            return ""
+        
+        return filename
+    
+    def _validate_file_content(self, content: bytes, expected_type: str) -> bool:
+        """Validate file content matches expected type"""
+        if expected_type == "pdf":
+            # Check PDF magic bytes
+            return content.startswith(b'%PDF-')
+        elif expected_type == "image":
+            # Check image magic bytes
+            image_signatures = [
+                b'\x89PNG\r\n\x1a\n',  # PNG
+                b'\xff\xd8\xff',        # JPEG
+                b'GIF87a',              # GIF87a
+                b'GIF89a',              # GIF89a
+                b'BM',                  # BMP
+                b'II*\x00',             # TIFF little endian
+                b'MM\x00*',             # TIFF big endian
+                b'RIFF',                # WebP
+            ]
+            return any(content.startswith(sig) for sig in image_signatures)
+        
+        return False
 
     def get_supported_formats(self) -> dict:
         supported_formats_dict = {

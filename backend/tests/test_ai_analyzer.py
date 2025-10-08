@@ -5,6 +5,7 @@ from models.analysis_models import AnalysisResult, KeyClause
 import os
 import json
 import asyncio
+from auth import create_token
 
 @pytest.fixture
 def ai_analyzer():
@@ -31,10 +32,8 @@ async def test_analyze_document_success(ai_analyzer):
         "confidence": 0.9
     }
 
-    mock_chat_completion = MagicMock()
-    mock_chat_completion.choices = [MagicMock()]
-    mock_chat_completion.choices[0].message.content = json.dumps(mock_response_data)
-    ai_analyzer.client.chat.completions.create.return_value = mock_chat_completion
+    # Mock the low-level OpenRouter call wrapper to return JSON string
+    ai_analyzer.analyze_with_openrouter = MagicMock(return_value=json.dumps(mock_response_data))
 
     result = await ai_analyzer.analyze_document(
         text="This is a test document.",
@@ -48,7 +47,8 @@ async def test_analyze_document_success(ai_analyzer):
 
 @pytest.mark.asyncio
 async def test_analyze_document_fallback(ai_analyzer):
-    ai_analyzer.client.chat.completions.create.side_effect = Exception("API Error")
+    # Force analyze_with_openrouter to raise to trigger fallback path
+    ai_analyzer.analyze_with_openrouter = MagicMock(side_effect=Exception("API Error"))
 
     with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
         result = await ai_analyzer.analyze_document(

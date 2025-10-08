@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, status
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, status, Depends
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -17,14 +17,21 @@ import asyncio
 from pathlib import Path
 import aiofiles
 import aiofiles.os
+import hashlib
 
 from services.document_processor import DocumentProcessor
 from services.ai_analyzer import AIAnalyzer
 from services.report_generator import ReportGenerator
 from models.analysis_models import AnalysisResult
 from utils.file_validator import FileValidator
-from middleware.rate_limiter import limiter
+from utils.error_handler import error_handler
+from middleware.rate_limiter import limiter, analysis_limiter, export_limiter
+from middleware.security_headers import SecurityHeadersMiddleware
 from slowapi.errors import RateLimitExceeded
+from auth import require_auth, enforce_content_length_limit, create_signed_url_token, verify_signed_url_token
+from services.tasks import celery_app
+from services.retention_jobs import get_retention_manager, start_retention_jobs, stop_retention_jobs
+from observability import setup_prometheus
 
 # Load environment variables
 load_dotenv()
@@ -118,6 +125,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+setup_prometheus(app)
 
 # CORS configuration
 APP_ENV = os.getenv("APP_ENV", "development")
@@ -139,8 +148,8 @@ allowed_headers = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_credentials=os.getenv("ALLOW_CREDENTIALS", "false").lower() == "true",
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=allowed_headers,
 )
 
@@ -161,159 +170,80 @@ analysis_lock = asyncio.Lock()
 analysis_semaphore = asyncio.Semaphore(MAX_CONCURRENT_ANALYSES)
 export_tasks: Dict[str, Dict[str, Any]] = {}
 
+# Expose shared state for routers
+app.state.analysis_cache = analysis_cache
+app.state.analysis_lock = analysis_lock
+app.state.analysis_semaphore = analysis_semaphore
+app.state.export_tasks = export_tasks
+
 # Custom exception handlers
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={"error": "Rate limit exceeded", "message": str(exc.detail)}
-    )
+    return error_handler.handle_rate_limit_exceeded(request, exc)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    request_id = getattr(request.state, "request_id", None)
-    logger.warning(f"Validation error for {request.url}: {exc.errors()}", extra={"request_id": request_id})
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "error": "Validation Error",
-            "message": "Invalid request data",
-            "details": exc.errors(),
-            "request_id": request_id
-        }
-    )
+    return error_handler.handle_validation_error(request, exc)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    request_id = getattr(request.state, "request_id", None)
-    logger.error(f"HTTP exception for {request.url}: {exc.detail}", 
-                extra={"error_type": "http_exception", "status_code": exc.status_code, "request_id": request_id})
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": "Request Failed",
-            "message": exc.detail,
-            "status_code": exc.status_code,
-            "request_id": request_id
-        }
-    )
+    return error_handler.handle_http_exception(request, exc)
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    request_id = getattr(request.state, "request_id", None)
-    logger.error(f"Unhandled exception for {request.url}", exc_info=True, 
-                extra={"error_type": "unhandled_exception", "request_id": request_id})
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": "Internal Server Error",
-            "message": "An unexpected error occurred. Please try again later.",
-            "request_id": request_id
-        }
-    )
+    return error_handler.handle_general_exception(request, exc)
 
-# Background task for cleanup
-async def cleanup_old_files():
-    """Background task to clean up old files and analyses"""
-    while True:
-        try:
-            await asyncio.sleep(CLEANUP_INTERVAL * 3600)
-            logger.info("Starting cleanup task")
-            cleanup_count = 0
-            now = datetime.now()
-            cutoff_time = now - timedelta(hours=CACHE_RETENTION_HOURS)
-            
-            async with analysis_lock:
-                # Create a copy of the dictionary items to avoid a race condition
-                for file_id, data in list(analysis_cache.items()):
-                    try:
-                        if data['timestamp'] < cutoff_time:
-                            file_path = data.get('file_path')
-                            if file_path:
-                                try:
-                                    await aiofiles.os.stat(file_path)
-                                    await aiofiles.os.remove(file_path)
-                                except FileNotFoundError:
-                                    pass
-                            del analysis_cache[file_id]
-                            cleanup_count += 1
-                    except Exception as e:
-                        logger.error(f"Error cleaning up file {file_id}: {e}", 
-                                   extra={"error_type": "cleanup_error", "file_id": file_id})
-            
-            logger.info(f"Cleanup completed: {cleanup_count} files removed", 
-                       extra={"cleanup_count": cleanup_count})
-        except Exception as e:
-            logger.error(f"Cleanup task failed: {e}", exc_info=True, extra={"error_type": "cleanup_task_error"})
-
-# Health check endpoint
-@app.get("/health")
-async def health_check(request: Request):
-    request_id = request.state.request_id
-    logger.info("Health check requested", extra={"request_id": request_id})
+# Initialize retention jobs
+async def initialize_retention_jobs():
+    """Initialize the retention jobs system"""
     try:
-        services_status = {
-            "document_processor": "healthy",
-            "ai_analyzer": "healthy", 
-            "report_generator": "healthy",
-            "tesseract_ocr": document_processor.tesseract_available
-        }
-        try:
-            disk_usage = shutil.disk_usage(TEMP_STORAGE_PATH)
-            free_space_gb = disk_usage.free / (1024**3)
-            services_status["disk_space_gb"] = round(free_space_gb, 2)
-        except:
-            services_status["disk_space_gb"] = "unknown"
+        retention_manager = get_retention_manager()
         
-        return {
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
-            "version": API_VERSION,
-            "cache_size": len(analysis_cache),
-            "active_analyses": MAX_CONCURRENT_ANALYSES - analysis_semaphore._value,
-            "services": services_status
-        }
+        # Set the analysis cache and lock for the retention manager
+        retention_manager.analysis_cache = analysis_cache
+        retention_manager.analysis_lock = analysis_lock
+        
+        # Start retention jobs
+        await retention_manager.start()
+        logger.info("Retention jobs initialized and started")
+        
     except Exception as e:
-        logger.error(f"Health check failed: {e}", exc_info=True, extra={"request_id": request_id})
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={
-                "error": "Service Unavailable",
-                "message": f"Health check failed: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            }
-        )
+        logger.error(f"Failed to initialize retention jobs: {e}", exc_info=True)
 
-@app.get("/")
-async def root(request: Request):
-    request_id = request.state.request_id
-    logger.info("Root endpoint requested", extra={"request_id": request_id})
-    return {
-        "name": "Legal Document Analyzer API",
-        "version": API_VERSION,
-        "description": "AI-powered legal document analysis with comprehensive reporting",
-        "status": "active",
-        "timestamp": datetime.now().isoformat(),
-        "endpoints": {
-            "health": "/health",
-            "analyze": "/analyze",
-            "export": "/export/{file_id}/{format}",
-            "supported_formats": "/supported-formats",
-            "docs": "/docs"
-        }
-    }
+from routers.system import router as system_router
+app.include_router(system_router)
 
-# ---- FIXED: Add supported-formats endpoint below ----
-@app.get("/supported-formats")
-async def get_supported_formats():
-    return {
-        "formats": ["PDF", "PNG", "JPG", "JPEG", "GIF", "BMP", "TIFF", "WEBP"]
-    }
-# ---- (nothing else changed here) ----
+# Startup and shutdown event handlers
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup"""
+    await initialize_retention_jobs()
+
+@app.post("/demo-token")
+async def get_demo_token():
+    """Get a demo token for development purposes"""
+    from auth import create_token
+    token = create_token("demo-user", expires_in_seconds=3600)
+    return {"access_token": token, "token_type": "bearer"}
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    try:
+        retention_manager = get_retention_manager()
+        await retention_manager.stop()
+        logger.info("Retention jobs stopped during shutdown")
+    except Exception as e:
+        logger.error(f"Error stopping retention jobs during shutdown: {e}")
 
 @app.post("/analyze")
-@limiter.limit("10/minute")
-async def analyze_document(request: Request, file: UploadFile = File(...)):
+@analysis_limiter.limit("10/minute")
+async def analyze_document(
+    request: Request,
+    file: UploadFile = File(...),
+    _auth=Depends(require_auth),
+    _size_guard=Depends(enforce_content_length_limit),
+):
     request_id = request.state.request_id
     start_time = datetime.now()
     
@@ -331,10 +261,19 @@ async def analyze_document(request: Request, file: UploadFile = File(...)):
         temp_file_path = None
         
         try:
-            file_content = await file.read()
-            file_size = len(file_content)
+            # Stream to temp file while hashing to avoid buffering entire file
+            file_id = str(uuid.uuid4())
+            file_extension = None
+            original_filename = file.filename or "unknown_file"
+            temp_file_path = None
+
+            hasher = hashlib.sha256()
+            size_counter = 0
+            chunk_size = 1024 * 1024
+            # Need extension to build path after validation; for streaming we hash first
+            content_peek = await file.read(1024 * 64)
             await file.seek(0)
-            
+            # Validate using peek content
             validation_result = await file_validator.validate_file(file)
             if not validation_result.is_valid:
                 logger.warning(f"File validation failed: {validation_result.error_message}", 
@@ -343,15 +282,35 @@ async def analyze_document(request: Request, file: UploadFile = File(...)):
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"File validation failed: {validation_result.error_message}"
                 )
-            
             file_extension = validation_result.file_extension
             stored_filename = f"{file_id}.{file_extension}"
             temp_file_path = os.path.join(TEMP_STORAGE_PATH, stored_filename)
-            
+
             async with aiofiles.open(temp_file_path, "wb") as buffer:
-                await file.seek(0)
-                content = await file.read()
-                await buffer.write(content)
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    size_counter += len(chunk)
+                    hasher.update(chunk)
+                    await buffer.write(chunk)
+            file_size = size_counter
+            file_hash = hasher.hexdigest()
+            
+            # Deduplicate by hash
+            for existing_id, data in analysis_cache.items():
+                if data.get("file_hash") == file_hash:
+                    logger.info("Duplicate upload detected, returning cached analysis", extra={"file_id": existing_id})
+                    cached = data["analysis"]
+                    response_data = cached.copy()
+                    response_data.update({
+                        "file_id": existing_id,
+                        "processing_time": data.get("processing_time", 0),
+                        "total_pages": data.get("total_pages", 0),
+                        "word_count": data.get("word_count", 0),
+                        "processing_notes": data.get("processing_notes", [])
+                    })
+                    return response_data
             
             logger.info(f"File saved for processing", extra={
                 "file_id": file_id,
@@ -390,14 +349,15 @@ async def analyze_document(request: Request, file: UploadFile = File(...)):
             processing_time = (datetime.now() - start_time).total_seconds()
             
             analysis_cache[file_id] = {
-                "analysis": analysis_result.dict(),
+                "analysis": analysis_result.model_dump(),
                 "file_path": temp_file_path,
                 "original_filename": original_filename,
                 "content_type": file.content_type,
                 "timestamp": datetime.now(),
                 "processing_time": processing_time,
                 "file_size": file_size,
-                "processing_notes": getattr(processing_result, 'processing_notes', []) or []
+                "processing_notes": getattr(processing_result, 'processing_notes', []) or [],
+                "file_hash": file_hash
             }
             
             logger.info(f"Analysis completed successfully", extra={
@@ -408,7 +368,7 @@ async def analyze_document(request: Request, file: UploadFile = File(...)):
                 "request_id": request_id
             })
             
-            response_data = analysis_result.dict()
+            response_data = analysis_result.model_dump()
             response_data.update({
                 "file_id": file_id,
                 "processing_time": processing_time,
@@ -439,13 +399,13 @@ async def analyze_document(request: Request, file: UploadFile = File(...)):
             )
 
 @app.get("/analysis/{file_id}")
-async def get_analysis(file_id: str):
+async def get_analysis(file_id: str, _auth=Depends(require_auth)):
     if file_id not in analysis_cache:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return analysis_cache[file_id]["analysis"]
 
 @app.get("/stats")
-async def get_stats():
+async def get_stats(_auth=Depends(require_auth)):
     return {
         "analysis_cache_size": len(analysis_cache),
         "export_tasks_size": len(export_tasks),
@@ -454,7 +414,7 @@ async def get_stats():
     }
 
 @app.delete("/analyses")
-async def clear_analyses(request: Request):
+async def clear_analyses(request: Request, _auth=Depends(require_auth)):
     request_id = request.state.request_id
     logger.info("Clear analyses request received", extra={"request_id": request_id})
     
@@ -484,7 +444,7 @@ async def clear_analyses(request: Request):
 
 
 @app.get("/documents/{file_id}")
-async def get_document(file_id: str):
+async def get_document(file_id: str, _auth=Depends(require_auth)):
     try:
         # Validate that file_id is a legitimate UUID
         uuid.UUID(file_id)
@@ -546,7 +506,7 @@ async def run_export(file_id: str, format: str, task_id: str):
         })
 
 @app.post("/export/{file_id}/{format}")
-async def export_analysis(file_id: str, format: str, background_tasks: BackgroundTasks):
+async def export_analysis(file_id: str, format: str, background_tasks: BackgroundTasks, _auth=Depends(require_auth)):
     if file_id not in analysis_cache:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -561,13 +521,20 @@ async def export_analysis(file_id: str, format: str, background_tasks: Backgroun
     
     task_id = str(uuid.uuid4())
     export_tasks[task_id] = {"status": "processing", "file_path": None}
-    
-    background_tasks.add_task(run_export, file_id, format, task_id)
+
+    if celery_app:
+        # Defer to Celery task
+        celery_app.send_task(
+            "backend.tasks.run_export_task",
+            args=[file_id, format, task_id],
+        )
+    else:
+        background_tasks.add_task(run_export, file_id, format, task_id)
     
     return {"task_id": task_id, "status": "processing"}
 
 @app.get("/export/{task_id}")
-async def get_export_status(task_id: str):
+async def get_export_status(task_id: str, _auth=Depends(require_auth)):
     if task_id not in export_tasks:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -577,11 +544,9 @@ async def get_export_status(task_id: str):
     task = export_tasks[task_id]
     
     if task["status"] == "completed":
-        return FileResponse(
-            path=task["file_path"],
-            media_type="application/octet-stream",
-            filename=os.path.basename(task["file_path"])
-        )
+        # Issue signed token for short-lived download link
+        token = create_signed_url_token(task_id, expires_in_seconds=int(os.getenv("EXPORT_URL_TTL", "300")))
+        return {"status": "ready", "download_token": token}
     elif task["status"] == "failed":
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -592,6 +557,22 @@ async def get_export_status(task_id: str):
         )
     else:
         return {"status": task["status"]}
+
+
+@app.get("/export/{task_id}/download")
+async def download_export(task_id: str, token: str):
+    if task_id not in export_tasks:
+        raise HTTPException(status_code=404, detail="Export task not found")
+    task = export_tasks[task_id]
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Export not ready")
+    if not verify_signed_url_token(token, task_id):
+        raise HTTPException(status_code=401, detail="Invalid or expired download token")
+    return FileResponse(
+        path=task["file_path"],
+        media_type="application/octet-stream",
+        filename=os.path.basename(task["file_path"]) 
+    )
 
 if __name__ == "__main__":
     # This block is crucial for Windows compatibility when using --reload

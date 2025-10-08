@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Search, Download, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import Card from './Card';
 import Button from './Button';
+import EnhancedSummary from './EnhancedSummary';
 
 interface KeyClause {
   type: string;
@@ -87,8 +88,8 @@ const Dashboard: React.FC<DashboardProps> = ({ analysis, onExport, onViewOrigina
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <Card className="p-6">
-            <h3 className="text-xl font-bold mb-4 text-gray-200">Analysis Summary</h3>
-            <p className="text-neutral leading-relaxed">{analysis.summary}</p>
+            <h3 className="text-xl font-bold mb-6 text-gray-200">Analysis Summary</h3>
+            <EnhancedSummary summary={analysis.summary} />
           </Card>
         </div>
         <div className="space-y-6">
@@ -116,8 +117,8 @@ const Dashboard: React.FC<DashboardProps> = ({ analysis, onExport, onViewOrigina
           <Card className="p-6">
             <h3 className="text-lg font-bold mb-4 text-gray-200">Actions</h3>
             <div className="flex flex-col space-y-3">
-              <Button onClick={() => onExport('pdf')} variant="primary"><Download className="h-4 w-4" /><span>Export PDF</span></Button>
-              <Button onClick={() => onExport('json')} variant="secondary"><Download className="h-4 w-4" /><span>Export JSON</span></Button>
+              <Button onClick={() => onExport('pdf')} variant="primary"><Download className="h-4 w-4" /><span>Export File (PDF)</span></Button>
+              <Button onClick={() => onExport('json')} variant="secondary"><Download className="h-4 w-4" /><span>Export File (JSON)</span></Button>
               <Button onClick={onViewOriginal} variant="tertiary"><span>View Original Document</span></Button>
               <Button onClick={onReset} variant="primary"><span>New Analysis</span></Button>
               <Button onClick={onClearHistory} variant="danger"><Trash2 className="h-4 w-4" /><span>Clear History</span></Button>
