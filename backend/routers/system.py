@@ -19,7 +19,7 @@ async def health_check(request: Request):
     request_id = getattr(request.state, "request_id", None)
     try:
         app = request.app
-        document_processor: DocumentProcessor = app.state.get("document_processor") if hasattr(app.state, "get") else None
+        document_processor: DocumentProcessor = getattr(app.state, "document_processor", None)
         services_status = {
             "document_processor": "healthy",
             "ai_analyzer": "healthy",

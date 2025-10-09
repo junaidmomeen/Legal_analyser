@@ -23,7 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .env
-.env.local
+.env.*
+backend/.env
+frontend/.env*
 
 # Backend
 backend/exports/

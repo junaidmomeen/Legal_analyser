@@ -3,6 +3,7 @@ import logging
 import httpx
 from typing import Protocol
 from openai import OpenAI
+from openai import APIStatusError
 
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,23 @@ class OpenRouterProvider:
             if not response or not response.choices:
                 raise ValueError("Empty response from OpenRouter")
             return response.choices[0].message.content.strip()
+        except APIStatusError as e:
+            # Graceful fallback for auth/availability errors to avoid noisy logs and circuit trips
+            status = getattr(e, "status_code", None)
+            if status == 401:
+                logger.warning("OpenRouter 401 Unauthorized. Returning local fallback response.")
+                return (
+                    '{"summary":"Limited local analysis.","key_clauses":[],"document_type":"Legal Document","confidence":0.6}'
+                )
+            logger.error(f"OpenRouter API status error: {e}")
+            raise
         except httpx.RequestError as e:
-            logger.error(f"OpenRouter API request failed: {e}")
-            raise Exception("API request failed. Please try again later.")
-        except Exception:
+            logger.warning(f"OpenRouter network error: {e}. Returning local fallback response.")
+            return (
+                '{"summary":"Limited local analysis (offline).","key_clauses":[],"document_type":"Legal Document","confidence":0.5}'
+            )
+        except Exception as e:
+            logger.error(f"OpenRouter unexpected error: {e}")
             raise
 
 

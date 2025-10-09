@@ -159,6 +159,13 @@ try:
     ai_analyzer = AIAnalyzer()
     report_generator = ReportGenerator()
     file_validator = FileValidator()
+
+    # Expose service instances on app.state for health checks and other modules
+    app.state.document_processor = document_processor
+    app.state.ai_analyzer = ai_analyzer
+    app.state.report_generator = report_generator
+    app.state.file_validator = file_validator
+
     logger.info("All services initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize services: {e}", exc_info=True, extra={"error_type": "service_initialization"})

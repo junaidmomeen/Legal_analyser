@@ -168,7 +168,7 @@ class AIAnalyzer:
         for attempt in range(1, self.max_retries + 1):
             try:
                 prompt = self.create_analysis_prompt(analysis_text)
-                raw_output = self.analyze_with_openrouter(prompt, attempt)
+                raw_output = await self.analyze_with_openrouter(prompt, attempt)
 
                 # Clean and parse JSON
                 clean_json = self.clean_json_response(raw_output)
@@ -220,7 +220,7 @@ class AIAnalyzer:
                 if attempt == self.max_retries:
                     # Try fallback with smaller chunks
                     logger.info("Attempting fallback analysis with smaller chunks...")
-                    return self.fallback_analysis(text, document_type, filename)
+                    return await self.fallback_analysis(text, document_type, filename)
                 else:
                     await asyncio.sleep(self.retry_delay)
                     continue
@@ -237,7 +237,7 @@ class AIAnalyzer:
         # Should not reach here, but just in case
         return self.create_fallback_result(document_type, "Maximum retries exceeded")
 
-    def fallback_analysis(
+    async def fallback_analysis(
         self, 
         text: str, 
         document_type: str, 
@@ -251,7 +251,7 @@ class AIAnalyzer:
             fallback_text = text[:self.fallback_chunk_size]
             prompt = self.create_analysis_prompt(fallback_text, is_fallback=True)
 
-            raw_output = self.analyze_with_openrouter(prompt)
+            raw_output = await self.analyze_with_openrouter(prompt)
 
             # Simple parsing for fallback
             try:
