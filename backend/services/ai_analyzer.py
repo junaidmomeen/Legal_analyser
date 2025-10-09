@@ -22,10 +22,6 @@ class AIAnalyzer:
         self.retry_delay = int(os.getenv("RETRY_DELAY", "2"))  # seconds
         self.fallback_chunk_size = 8000  # characters for fallback mode
 
-    def save_debug_output(self, raw_output: str, filename: str = None, status: str = "success") -> None:
-        """Save raw AI output for debugging purposes"""
-        # This function is no longer needed as debug_outputs directory is removed
-        pass
 
     def clean_json_response(self, raw_text: str) -> str:
         """Clean and extract JSON from AI response"""
@@ -173,10 +169,7 @@ class AIAnalyzer:
             try:
                 prompt = self.create_analysis_prompt(analysis_text)
                 raw_output = self.analyze_with_openrouter(prompt, attempt)
-                
-                # Save successful output for debugging
-                # self.save_debug_output(raw_output, f"success_{filename}_{attempt}.json", "success")
-                
+
                 # Clean and parse JSON
                 clean_json = self.clean_json_response(raw_output)
                 data = json.loads(clean_json)
@@ -223,10 +216,7 @@ class AIAnalyzer:
                 
             except json.JSONDecodeError as e:
                 logger.warning(f"JSON parsing failed (attempt {attempt}): {e}")
-                # Save failed output for debugging
-                # if 'raw_output' in locals():
-                #     self.save_debug_output(raw_output, f"json_error_{filename}_{attempt}.json", "json_error")
-                
+
                 if attempt == self.max_retries:
                     # Try fallback with smaller chunks
                     logger.info("Attempting fallback analysis with smaller chunks...")
@@ -237,10 +227,7 @@ class AIAnalyzer:
             
             except Exception as e:
                 logger.error(f"Analysis attempt {attempt} failed: {str(e)}")
-                # Save failed output for debugging
-                # if 'raw_output' in locals():
-                #     self.save_debug_output(raw_output, f"error_{filename}_{attempt}.json", "error")
-                
+
                 if attempt == self.max_retries:
                     # Final fallback
                     return self.create_fallback_result(document_type, str(e))
@@ -263,10 +250,9 @@ class AIAnalyzer:
             # Use smaller chunk for fallback
             fallback_text = text[:self.fallback_chunk_size]
             prompt = self.create_analysis_prompt(fallback_text, is_fallback=True)
-            
+
             raw_output = self.analyze_with_openrouter(prompt)
-            # self.save_debug_output(raw_output, f"fallback_{filename}.json", "fallback")
-            
+
             # Simple parsing for fallback
             try:
                 clean_json = self.clean_json_response(raw_output)
