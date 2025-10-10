@@ -159,7 +159,12 @@ try:
     app.state.report_generator = report_generator
     app.state.file_validator = file_validator
 
-    logger.info("All services initialized successfully")
+    # Log OCR status at startup
+    ocr_status = "ENABLED" if document_processor.tesseract_available else "DISABLED"
+    logger.info(f"All services initialized successfully | OCR Status: {ocr_status}")
+
+    if not document_processor.tesseract_available:
+        logger.warning("Application running without OCR support - image uploads will fail")
 except Exception as e:
     logger.error(f"Failed to initialize services: {e}", exc_info=True, extra={"error_type": "service_initialization"})
     raise

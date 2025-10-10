@@ -33,7 +33,10 @@ class DocumentProcessor:
         self.supported_pdf_extensions = {'.pdf'}
         self.supported_image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp'}
         
-        logger.info(f"DocumentProcessor initialized. Tesseract available: {self.tesseract_available}")
+        if self.tesseract_available:
+            logger.info("DocumentProcessor initialized with OCR support enabled")
+        else:
+            logger.warning("DocumentProcessor initialized WITHOUT OCR support - images cannot be processed")
     
     def _detect_tesseract(self) -> bool:
         """Detect if Tesseract is available and properly configured"""
@@ -41,34 +44,39 @@ class DocumentProcessor:
             # Try common Tesseract paths
             tesseract_paths = [
                 r'C:\Program Files\Tesseract-OCR\tesseract.exe',  # Windows default
-                '/usr/bin/tesseract',  # Linux default
+                '/usr/bin/tesseract',  # Linux default (Docker/Render/Vercel)
                 '/opt/homebrew/bin/tesseract',  # macOS Homebrew
                 '/usr/local/bin/tesseract',  # macOS/Linux alternative
                 'tesseract'  # System PATH
             ]
-            
+
             for path in tesseract_paths:
                 try:
-                    if os.path.exists(path) or path == 'tesseract':
+                    if path == 'tesseract' or os.path.exists(path):
                         pytesseract.pytesseract.tesseract_cmd = path
                         # Test with version command
                         version = pytesseract.get_tesseract_version()
-                        logger.info(f"Tesseract detected at {path}, version: {version}")
+                        logger.info(f"✓ Tesseract OCR successfully initialized at {path}, version: {version}")
                         return True
-                except Exception as e:
+                except Exception:
                     continue
-            
+
             # Final attempt with system call
-            result = subprocess.run(['tesseract', '--version'], 
-                                  capture_output=True, text=True, timeout=5)
+            result = subprocess.run(
+                ['tesseract', '--version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
             if result.returncode == 0:
-                logger.info("Tesseract detected via system PATH")
+                version_line = result.stdout.split('\n')[0] if result.stdout else 'unknown'
+                logger.info(f"✓ Tesseract OCR successfully initialized via system PATH: {version_line}")
                 return True
-                
+
         except Exception as e:
             logger.warning(f"Tesseract detection failed: {e}")
-        
-        logger.warning("⚠️ Tesseract OCR not detected. Image processing will be limited.")
+
+        logger.error("✗ Tesseract OCR not available. Image processing disabled. Install: apt-get install tesseract-ocr")
         return False
     
     async def process_document(self, file_path: str, file_type: str = None) -> DocumentProcessingResult:
@@ -222,8 +230,12 @@ class DocumentProcessor:
             if not self.tesseract_available:
                 return DocumentProcessingResult(
                     success=False,
-                    error_message="OCR not available. Please install Tesseract to process images.",
-                    processing_notes=["Install Tesseract OCR: https://github.com/tesseract-ocr/tesseract"]
+                    error_message="OCR engine not available. Tesseract is required for image processing.",
+                    processing_notes=[
+                        "Tesseract OCR is not installed or not accessible",
+                        "For Docker: Ensure tesseract-ocr is in the Dockerfile",
+                        "For local dev: Install via 'apt-get install tesseract-ocr' (Linux) or 'brew install tesseract' (macOS)"
+                    ]
                 )
             
             logger.info(f"Processing image with OCR: {Path(file_path).name}")

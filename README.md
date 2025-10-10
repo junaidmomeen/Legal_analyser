@@ -14,6 +14,12 @@ Analyze legal documents with AI. Upload a PDF or image. Get a clear summary, key
 
 ## Quick start (local)
 1) Backend
+
+**Install OCR (required for images):**
+- Ubuntu/Debian: `sudo apt-get install tesseract-ocr libmagic1`
+- macOS: `brew install tesseract libmagic`
+- Windows: Download from [tesseract-ocr](https://github.com/UB-Mannheim/tesseract/wiki)
+
 ```bash
 cd backend
 python -m venv venv
@@ -22,6 +28,8 @@ pip install -r requirements.txt
 set OPENROUTER_API_KEY=your_key_here
 python -m uvicorn main:app --reload
 ```
+
+Verify OCR: `python verify_ocr.py`
 
 2) Frontend
 ```bash
@@ -55,10 +63,12 @@ If your backend URL is different, set `VITE_API_URL` for the frontend container 
 - Vercel (frontend):
   - Set `VITE_API_URL` to your backend URL
   - Build: `npm run build`, Output: `dist`
-- Render/Railway (backend):
+- Render/Railway/Fly.io (backend):
+  - Docker build auto-installs Tesseract OCR
   - Start command: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`
   - Env: `OPENROUTER_API_KEY`, `APP_ENV=production`
-  - Procfile already included: `web: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`
+  - Procfile already included for non-Docker deployments
+  - **OCR automatically works in Docker** - no manual setup needed!
 
 ## Environment variables
 - Backend: `OPENROUTER_API_KEY`, `APP_ENV`, optional: `RATE_LIMIT_*`, `ENABLE_PROMETHEUS`
@@ -76,6 +86,12 @@ If your backend URL is different, set `VITE_API_URL` for the frontend container 
 - Use Redis for rate limiting (set `RATE_LIMIT_STORAGE_URI`)
 - Enable Prometheus metrics (`ENABLE_PROMETHEUS=true`)
 - Logs are JSON and include request IDs
+- OCR status logged on startup and available at `/health`
+
+## OCR Troubleshooting
+- Check OCR status: `curl https://your-api.com/health`
+- View startup logs for OCR detection messages
+- See [backend/OCR_SETUP.md](backend/OCR_SETUP.md) for detailed setup guide
 
 ## License
 MIT

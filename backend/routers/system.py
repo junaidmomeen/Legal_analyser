@@ -19,11 +19,13 @@ async def health_check(request: Request):
     try:
         app = request.app
         document_processor: DocumentProcessor = getattr(app.state, "document_processor", None)
+        ocr_available = getattr(document_processor, "tesseract_available", False) if document_processor else False
         services_status = {
             "document_processor": "healthy",
             "ai_analyzer": "healthy",
             "report_generator": "healthy",
-            "tesseract_ocr": getattr(document_processor, "tesseract_available", None),
+            "tesseract_ocr": "enabled" if ocr_available else "disabled",
+            "image_processing": "available" if ocr_available else "unavailable",
         }
         try:
             temp_path = os.getenv("TEMP_STORAGE_PATH", "temp_uploads")
@@ -128,22 +130,44 @@ async def deep_health_check(request: Request):
         app_state_cache = getattr(app.state, "analysis_cache", {})
         app_state_sem = getattr(app.state, "analysis_semaphore", None)
         max_concurrent = int(os.getenv("MAX_CONCURRENT_ANALYSES", "5"))
-        
+
         active_analyses = (max_concurrent - getattr(app_state_sem, "_value", max_concurrent)) if app_state_sem else 0
-        
+
         health_checks["checks"]["analysis_service"] = {
             "status": "healthy",
             "cache_size": len(app_state_cache),
             "active_analyses": active_analyses,
             "max_concurrent": max_concurrent
         }
-        
+
     except Exception as e:
         health_checks["checks"]["analysis_service"] = {
             "status": "error",
             "error": str(e)
         }
         overall_status = "critical"
+
+    try:
+        # Check OCR availability
+        app = request.app
+        document_processor = getattr(app.state, "document_processor", None)
+        ocr_available = getattr(document_processor, "tesseract_available", False) if document_processor else False
+
+        health_checks["checks"]["ocr_service"] = {
+            "status": "healthy" if ocr_available else "warning",
+            "tesseract_available": ocr_available,
+            "image_processing": "enabled" if ocr_available else "disabled",
+            "message": "OCR fully operational" if ocr_available else "OCR unavailable - images cannot be processed"
+        }
+
+        if not ocr_available and overall_status == "healthy":
+            overall_status = "warning"
+
+    except Exception as e:
+        health_checks["checks"]["ocr_service"] = {
+            "status": "error",
+            "error": str(e)
+        }
     
     try:
         # Check AI service availability

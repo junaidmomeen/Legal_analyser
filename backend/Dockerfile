@@ -34,6 +34,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install runtime system dependencies
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
+    tesseract-ocr-eng \
     libtesseract-dev \
     libmagic1 \
     libgl1 \
@@ -43,8 +44,10 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && apt-get clean \
+    && tesseract --version
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -57,6 +60,9 @@ WORKDIR /app
 
 # Copy application code
 COPY . .
+
+# Make startup script executable
+RUN chmod +x startup.sh
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/logs /app/exports /app/temp_uploads \
@@ -74,4 +80,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Run the application (respect platform-provided PORT)
 ENV PORT=8000
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}", "--workers", "4"]
+CMD ["./startup.sh"]
