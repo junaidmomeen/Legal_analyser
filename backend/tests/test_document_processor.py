@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from services.document_processor import DocumentProcessor
 import os
-from auth import create_token
+# No auth in application anymore
 
 @pytest.fixture
 def document_processor():

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, status, Depends, HTTPException
+from fastapi import APIRouter, Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Any, Dict
 from datetime import datetime
@@ -8,7 +8,6 @@ import os
 from services.document_processor import DocumentProcessor
 from services.retention_jobs import get_retention_manager
 from utils.circuit_breaker import circuit_manager
-from auth import require_auth
 
 
 router = APIRouter()
@@ -210,7 +209,7 @@ async def get_supported_formats():
 
 
 @router.get("/retention/status")
-async def get_retention_status(_auth=Depends(require_auth)):
+async def get_retention_status():
     """Get current retention jobs status"""
     try:
         retention_manager = get_retention_manager()
@@ -225,7 +224,6 @@ async def get_retention_status(_auth=Depends(require_auth)):
 @router.post("/retention/cleanup")
 async def force_cleanup(
     cleanup_type: str = "all",
-    _auth=Depends(require_auth)
 ):
     """Force immediate cleanup of specified type"""
     retention_manager = get_retention_manager()

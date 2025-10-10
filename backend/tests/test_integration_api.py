@@ -4,7 +4,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch
 from models.analysis_models import AnalysisResult, KeyClause
-from auth import create_token
+# No auth in application anymore
 
 
 @pytest.fixture(scope="module")

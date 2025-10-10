@@ -28,7 +28,7 @@ from utils.error_handler import error_handler
 from middleware.rate_limiter import limiter, analysis_limiter, export_limiter
 from middleware.security_headers import SecurityHeadersMiddleware
 from slowapi.errors import RateLimitExceeded
-from auth import require_auth, enforce_content_length_limit, create_signed_url_token, verify_signed_url_token
+from utils.request_guards import enforce_content_length_limit
 from services.tasks import celery_app
 from services.retention_jobs import get_retention_manager, start_retention_jobs, stop_retention_jobs
 from observability import setup_prometheus
@@ -147,10 +147,10 @@ allowed_headers = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=os.getenv("ALLOW_CREDENTIALS", "false").lower() == "true",
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=allowed_headers,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize services
@@ -226,12 +226,7 @@ async def startup_event():
     """Initialize services on startup"""
     await initialize_retention_jobs()
 
-@app.post("/demo-token")
-async def get_demo_token():
-    """Get a demo token for development purposes"""
-    from auth import create_token
-    token = create_token("demo-user", expires_in_seconds=3600)
-    return {"access_token": token, "token_type": "bearer"}
+# No authentication endpoints; application operates without login
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -248,7 +243,6 @@ async def shutdown_event():
 async def analyze_document(
     request: Request,
     file: UploadFile = File(...),
-    _auth=Depends(require_auth),
     _size_guard=Depends(enforce_content_length_limit),
 ):
     request_id = request.state.request_id
@@ -406,13 +400,13 @@ async def analyze_document(
             )
 
 @app.get("/analysis/{file_id}")
-async def get_analysis(file_id: str, _auth=Depends(require_auth)):
+async def get_analysis(file_id: str):
     if file_id not in analysis_cache:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return analysis_cache[file_id]["analysis"]
 
 @app.get("/stats")
-async def get_stats(_auth=Depends(require_auth)):
+async def get_stats():
     return {
         "analysis_cache_size": len(analysis_cache),
         "export_tasks_size": len(export_tasks),
@@ -421,7 +415,7 @@ async def get_stats(_auth=Depends(require_auth)):
     }
 
 @app.delete("/analyses")
-async def clear_analyses(request: Request, _auth=Depends(require_auth)):
+async def clear_analyses(request: Request):
     request_id = request.state.request_id
     logger.info("Clear analyses request received", extra={"request_id": request_id})
     
@@ -451,7 +445,7 @@ async def clear_analyses(request: Request, _auth=Depends(require_auth)):
 
 
 @app.get("/documents/{file_id}")
-async def get_document(file_id: str, _auth=Depends(require_auth)):
+async def get_document(file_id: str):
     try:
         # Validate that file_id is a legitimate UUID
         uuid.UUID(file_id)
@@ -513,7 +507,7 @@ async def run_export(file_id: str, format: str, task_id: str):
         })
 
 @app.post("/export/{file_id}/{format}")
-async def export_analysis(file_id: str, format: str, background_tasks: BackgroundTasks, _auth=Depends(require_auth)):
+async def export_analysis(file_id: str, format: str, background_tasks: BackgroundTasks):
     if file_id not in analysis_cache:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -541,7 +535,7 @@ async def export_analysis(file_id: str, format: str, background_tasks: Backgroun
     return {"task_id": task_id, "status": "processing"}
 
 @app.get("/export/{task_id}")
-async def get_export_status(task_id: str, _auth=Depends(require_auth)):
+async def get_export_status(task_id: str,):
     if task_id not in export_tasks:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -551,9 +545,7 @@ async def get_export_status(task_id: str, _auth=Depends(require_auth)):
     task = export_tasks[task_id]
     
     if task["status"] == "completed":
-        # Issue signed token for short-lived download link
-        token = create_signed_url_token(task_id, expires_in_seconds=int(os.getenv("EXPORT_URL_TTL", "300")))
-        return {"status": "ready", "download_token": token}
+        return {"status": "ready"}
     elif task["status"] == "failed":
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -567,14 +559,12 @@ async def get_export_status(task_id: str, _auth=Depends(require_auth)):
 
 
 @app.get("/export/{task_id}/download")
-async def download_export(task_id: str, token: str):
+async def download_export(task_id: str):
     if task_id not in export_tasks:
         raise HTTPException(status_code=404, detail="Export task not found")
     task = export_tasks[task_id]
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail="Export not ready")
-    if not verify_signed_url_token(token, task_id):
-        raise HTTPException(status_code=401, detail="Invalid or expired download token")
     return FileResponse(
         path=task["file_path"],
         media_type="application/octet-stream",

@@ -3,24 +3,12 @@ import logging
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from typing import Callable
-from auth import decode_token
 
 logger = logging.getLogger(__name__)
 
 
 def key_func_with_user(request) -> str:
-    """Prefer user subject from Bearer token; fallback to remote IP."""
-    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-        try:
-            payload = decode_token(token)
-            sub = payload.get("sub")
-            if sub:
-                return f"user:{sub}"
-        except Exception:
-            # fall back to IP
-            pass
+    """Use client IP address as the rate limit key (no auth)."""
     return get_remote_address(request)
 
 

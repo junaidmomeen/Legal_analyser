@@ -6,38 +6,6 @@ const apiClient = axios.create({
   baseURL: API_URL,
 });
 
-// Get demo token for development
-const getDemoToken = async (): Promise<string> => {
-  const cachedToken = localStorage.getItem('auth_token');
-  if (cachedToken) {
-    return cachedToken;
-  }
-  
-  try {
-    const response = await axios.post(`${API_URL}/demo-token`);
-    const token = response.data.access_token;
-    localStorage.setItem('auth_token', token);
-    return token;
-  } catch (error) {
-    console.error('Failed to get demo token:', error);
-    throw error;
-  }
-};
-
-// Add authentication interceptor
-apiClient.interceptors.request.use(async (config) => {
-  try {
-    const token = await getDemoToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-  } catch (error) {
-    console.error('Authentication error:', error);
-  }
-  
-  return config;
-});
-
 export interface ApiError {
   message: string;
   status?: number;
@@ -114,9 +82,7 @@ export const exportAnalysis = async (fileId: string, format: 'pdf' | 'json', opt
         const pollResponse = await apiClient.get(`/export/${taskId}`);
 
         if (pollResponse.data.status === 'ready') {
-          // Get the download URL with token
           const downloadResponse = await apiClient.get(`/export/${taskId}/download`, {
-            params: { token: pollResponse.data.download_token },
             responseType: 'blob'
           });
 

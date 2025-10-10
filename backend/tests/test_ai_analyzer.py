@@ -5,7 +5,7 @@ from models.analysis_models import AnalysisResult, KeyClause
 import os
 import json
 import asyncio
-from auth import create_token
+# No auth in application anymore
 
 @pytest.fixture
 def ai_analyzer():

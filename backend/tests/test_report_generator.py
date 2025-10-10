@@ -1,5 +1,5 @@
 from services.report_generator import ReportGenerator
-from auth import create_token
+# No auth in application anymore
 
 
 def test_export_as_json_creates_file(tmp_path):

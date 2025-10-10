@@ -5,7 +5,7 @@ from utils.file_validator import FileValidator
 import os
 from PIL import Image
 import io
-from auth import create_token
+# No auth in application anymore
 
 
 class FakeUploadFile:
