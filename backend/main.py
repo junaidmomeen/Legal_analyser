@@ -36,6 +36,29 @@ from observability import setup_prometheus
 # Load environment variables
 load_dotenv()
 
+# Validate required environment variables
+def validate_environment():
+    """Validate that all required environment variables are set"""
+    required_vars = ["OPENROUTER_API_KEY"]
+    missing_vars = []
+    
+    for var in required_vars:
+        if not os.getenv(var):
+            missing_vars.append(var)
+    
+    if missing_vars:
+        error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+        print(f"ERROR: {error_msg}")
+        print("\nTo fix this issue:")
+        print("1. Create a .env file in the backend directory")
+        print("2. Add your OpenRouter API key:")
+        print("   OPENROUTER_API_KEY=your_api_key_here")
+        print("3. Get your API key from: https://openrouter.ai/keys")
+        raise SystemExit(error_msg)
+
+# Validate environment before starting
+validate_environment()
+
 # API Version
 API_VERSION = "1.1.0"
 

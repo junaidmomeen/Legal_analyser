@@ -26,7 +26,7 @@ class DocumentProcessor:
         
         # OCR configuration
         self.tesseract_available = self._detect_tesseract()
-        self.tesseract_config = r'--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:!?()[]{}"/\-@#$%^&*+=<>|~'
+        self.tesseract_config = '--psm 6'
 
         
         # Supported formats

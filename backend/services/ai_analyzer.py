@@ -24,9 +24,10 @@ class AIAnalyzer:
 
 
     def clean_json_response(self, raw_text: str) -> str:
-        """Clean and extract JSON from AI response"""
+        """Clean and extract JSON from AI response with improved error handling"""
         if not raw_text or not raw_text.strip():
-            raise ValueError("Empty response from AI")
+            logger.error("Empty response from AI model")
+            return '{"summary":"Analysis failed due to empty AI response.","key_clauses":[],"document_type":"Unknown","confidence":0.0}'
         
         # Remove markdown code blocks
         if "```json" in raw_text:
@@ -45,10 +46,19 @@ class AIAnalyzer:
         json_start = raw_text.find('{')
         json_end = raw_text.rfind('}') + 1
         
-        if json_start != -1 and json_end != 0:
-            raw_text = raw_text[json_start:json_end]
+        if json_start == -1 or json_end == 0:
+            logger.error(f"No JSON found in AI response: {raw_text[:100]}...")
+            return '{"summary":"Analysis failed due to invalid response format.","key_clauses":[],"document_type":"Unknown","confidence":0.0}'
+            
+        raw_text = raw_text[json_start:json_end]
         
-        return raw_text.strip()
+        # Validate JSON before returning
+        try:
+            json.loads(raw_text.strip())  # Test if it's valid JSON
+            return raw_text.strip()
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON after cleaning: {str(e)}")
+            return '{"summary":"Analysis failed due to malformed response.","key_clauses":[],"document_type":"Unknown","confidence":0.0}'
 
     def create_analysis_prompt(self, text: str, is_fallback: bool = False) -> str:
         """Create the analysis prompt with optional fallback mode"""
@@ -133,22 +143,30 @@ class AIAnalyzer:
         name="openrouter_api",
         failure_threshold=3,
         recovery_timeout=120.0,
-        expected_exception=(httpx.RequestError, httpx.HTTPStatusError, Exception)
+        expected_exception=(ValueError, httpx.RequestError, httpx.HTTPStatusError, Exception)
     )
-    def analyze_with_openrouter(self, prompt: str, attempt: int = 1) -> str:
+    async def analyze_with_openrouter(self, prompt: str, attempt: int = 1) -> str:
         """Make API call to OpenRouter with circuit breaker protection"""
         try:
             logger.info(f"Making OpenRouter API call (attempt {attempt}/{self.max_retries})")
             
-            return self.provider.generate(prompt, self.model)
+            # Make the call synchronous since the provider.generate is synchronous
+            import asyncio
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.provider.generate, prompt, self.model)
             
+        except ValueError as e:
+            # Handle specific error messages from the provider
+            logger.error(f"OpenRouter API validation error (attempt {attempt}): {e}")
+            raise Exception(f"AI service error: {e}")
+        
         except httpx.RequestError as e:
             logger.error(f"OpenRouter API request failed: {e}")
-            raise Exception("API request failed. Please try again later.")
+            raise Exception("Network error connecting to AI service. Please try again later.")
         
         except Exception as e:
             logger.error(f"OpenRouter API error (attempt {attempt}): {str(e)}")
-            raise
+            raise Exception(f"AI analysis failed: {str(e)}")
 
     async def analyze_document(
         self,
@@ -172,13 +190,25 @@ class AIAnalyzer:
 
                 # Clean and parse JSON
                 clean_json = self.clean_json_response(raw_output)
-                data = json.loads(clean_json)
+                
+                try:
+                    data = json.loads(clean_json)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parsing failed on attempt {attempt}: {str(e)}")
+                    if attempt == self.max_retries:
+                        return self.create_fallback_result(document_type, "Failed to parse AI response")
+                    await asyncio.sleep(self.retry_delay)
+                    continue
                 
                 # Validate required fields
                 required_fields = ["summary", "key_clauses", "document_type", "confidence"]
                 missing_fields = [field for field in required_fields if field not in data]
                 if missing_fields:
-                    raise ValueError(f"Missing required fields: {missing_fields}")
+                    logger.warning(f"Missing required fields in AI response: {missing_fields}")
+                    if attempt == self.max_retries:
+                        return self.create_fallback_result(document_type, f"Incomplete response: missing {', '.join(missing_fields)}")
+                    await asyncio.sleep(self.retry_delay)
+                    continue
                 
                 # Transform into AnalysisResult
                 key_clauses: List[KeyClause] = []
