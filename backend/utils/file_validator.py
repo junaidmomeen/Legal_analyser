@@ -1,5 +1,10 @@
 import os
-import magic
+try:
+    import magic  # type: ignore
+    _MAGIC_AVAILABLE = True
+except Exception:
+    magic = None  # type: ignore
+    _MAGIC_AVAILABLE = False
 from fastapi import UploadFile
 from typing import Set
 import logging
@@ -92,7 +97,10 @@ class FileValidator:
                     error_message="File is empty"
                 )
             
-            mime_type = magic.from_buffer(content, mime=True)
+            if _MAGIC_AVAILABLE:
+                mime_type = magic.from_buffer(content, mime=True)
+            else:
+                mime_type = self._detect_mime_without_libmagic(content, file_extension)
             if mime_type not in self.allowed_mime_types:
                 return FileValidationResult(
                     is_valid=False,
@@ -234,6 +242,37 @@ class FileValidator:
             return any(content.startswith(sig) for sig in image_signatures)
         
         return False
+
+    def _detect_mime_without_libmagic(self, content: bytes, file_extension: str) -> str:
+        """Best-effort MIME detection using signatures and extension when libmagic is unavailable.
+        This is intended for Windows/local dev environments lacking libmagic.
+        """
+        # Signature-based detection first
+        if content.startswith(b'%PDF-'):
+            return 'application/pdf'
+        signatures = {
+            b'\x89PNG\r\n\x1a\n': 'image/png',
+            b'\xff\xd8\xff': 'image/jpeg',
+            b'GIF87a': 'image/gif',
+            b'GIF89a': 'image/gif',
+            b'BM': 'image/bmp',
+            b'II*\x00': 'image/tiff',
+            b'MM\x00*': 'image/tiff',
+        }
+        for sig, mime in signatures.items():
+            if content.startswith(sig):
+                return mime
+        # Fallback by extension (lower confidence)
+        ext_map = {
+            '.pdf': 'application/pdf',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.bmp': 'image/bmp',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+        }
+        return ext_map.get(file_extension.lower(), 'application/octet-stream')
 
     def get_supported_formats(self) -> dict:
         supported_formats_dict = {
