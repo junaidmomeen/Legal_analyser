@@ -241,44 +241,65 @@ class DocumentProcessor:
             logger.info(f"Processing image with OCR: {Path(file_path).name}")
             
             # Open and validate image
-            img = Image.open(file_path)
-            original_size = img.size
+            try:
+                img = Image.open(file_path)
+                original_size = img.size
+            except Exception as img_error:
+                logger.error(f"Failed to open image file: {str(img_error)}")
+                return DocumentProcessingResult(
+                    success=False,
+                    error_message=f"Failed to open image file: {str(img_error)}",
+                    processing_notes=["The image file may be corrupted or in an unsupported format"]
+                )
             
             # Enhance image for better OCR results
             enhanced_img = self._enhance_image_for_ocr(img)
             
             # Extract text using Tesseract OCR
-            extracted_text = pytesseract.image_to_string(enhanced_img, config=self.tesseract_config)
-            
-            if not extracted_text.strip():
-                # Try with different OCR settings
-                logger.warning("No text extracted with default settings, trying alternative OCR config...")
-                alt_config = '--psm 3'  # Different page segmentation mode
-                extracted_text = pytesseract.image_to_string(enhanced_img, config=alt_config)
-            
-            if not extracted_text.strip():
-                logger.warning("No text extracted from image")
-                extracted_text = "[No text could be extracted from this image. Try improving image quality or contrast.]"
-                processing_notes = [
-                    "No text detected in image",
-                    "Tips: Ensure text is clear, high contrast, and properly oriented"
-                ]
-            else:
-                processing_notes = [f"OCR processed image: {original_size[0]}x{original_size[1]}px"]
-            
-            word_count = len(extracted_text.split())
-            
-            return DocumentProcessingResult(
-                success=True,
-                extracted_text=extracted_text.strip(),
-                total_pages=1,
-                word_count=word_count,
-                processing_notes=processing_notes
-            )
+            try:
+                extracted_text = pytesseract.image_to_string(enhanced_img, config=self.tesseract_config)
+                
+                if not extracted_text.strip():
+                    # Try with different OCR settings
+                    logger.warning("No text extracted with default settings, trying alternative OCR config...")
+                    alt_config = '--psm 3'  # Different page segmentation mode
+                    extracted_text = pytesseract.image_to_string(enhanced_img, config=alt_config)
+                
+                if not extracted_text.strip():
+                    logger.warning("No text extracted from image")
+                    extracted_text = "[No text could be extracted from this image. Try improving image quality or contrast.]"
+                    processing_notes = [
+                        "No text detected in image",
+                        "Tips: Ensure text is clear, high contrast, and properly oriented"
+                    ]
+                else:
+                    processing_notes = [f"OCR processed image: {original_size[0]}x{original_size[1]}px"]
+                
+                word_count = len(extracted_text.split())
+                
+                return DocumentProcessingResult(
+                    success=True,
+                    extracted_text=extracted_text.strip(),
+                    total_pages=1,
+                    word_count=word_count,
+                    processing_notes=processing_notes
+                )
+            except Exception as ocr_error:
+                logger.error(f"OCR processing failed: {str(ocr_error)}")
+                return DocumentProcessingResult(
+                    success=False,
+                    error_message=f"OCR processing failed: {str(ocr_error)}",
+                    processing_notes=["Error occurred during text extraction", 
+                                     "Try with a clearer image or different format"]
+                )
             
         except Exception as e:
             logger.error(f"Error processing image: {str(e)}")
-            raise
+            return DocumentProcessingResult(
+                success=False,
+                error_message=f"Processing error: {str(e)}",
+                processing_notes=["Unexpected error during image processing"]
+            )
     
     def _enhance_image_for_ocr(self, img: Image.Image) -> Image.Image:
         """Enhanced image preprocessing for better OCR results"""

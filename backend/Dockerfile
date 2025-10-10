@@ -61,8 +61,9 @@ WORKDIR /app
 # Copy application code
 COPY . .
 
-# Make startup script executable
-RUN chmod +x startup.sh
+# Copy and make startup script executable
+COPY startup.sh /app/startup.sh
+RUN chmod +x /app/startup.sh
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/logs /app/exports /app/temp_uploads \
@@ -80,4 +81,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Run the application (respect platform-provided PORT)
 ENV PORT=8000
-CMD ["./startup.sh"]
+CMD ["sh", "-c", "cd /app && sh startup.sh"]

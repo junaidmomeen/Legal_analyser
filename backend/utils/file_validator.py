@@ -239,6 +239,9 @@ class FileValidator:
                 b'MM\x00*',             # TIFF big endian
                 b'RIFF',                # WebP
             ]
+            # Special case for JPEG files which might have different signatures
+            if content.startswith(b'\xff\xd8'):
+                return True
             return any(content.startswith(sig) for sig in image_signatures)
         
         return False
@@ -272,7 +275,12 @@ class FileValidator:
             '.tif': 'image/tiff',
             '.tiff': 'image/tiff',
         }
-        return ext_map.get(file_extension.lower(), 'application/octet-stream')
+        # Return the mapped MIME type or default to a safe value based on extension
+        mime_type = ext_map.get(file_extension.lower(), 'application/octet-stream')
+        # For JPG/JPEG files, ensure we always return the correct MIME type
+        if file_extension.lower() in ['.jpg', '.jpeg']:
+            return 'image/jpeg'
+        return mime_type
 
     def get_supported_formats(self) -> dict:
         supported_formats_dict = {

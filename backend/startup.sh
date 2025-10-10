@@ -11,23 +11,19 @@ echo "Checking OCR dependencies..."
 if command -v tesseract >/dev/null 2>&1; then
     TESSERACT_VERSION=$(tesseract --version 2>&1 | head -n1)
     echo "✓ Tesseract OCR: $TESSERACT_VERSION"
-
-    # Check for language data
-    if tesseract --list-langs >/dev/null 2>&1; then
-        LANGS=$(tesseract --list-langs 2>&1 | tail -n +2 | tr '\n' ', ' | sed 's/,$//')
-        echo "✓ Available languages: $LANGS"
-    else
-        echo "⚠ Warning: No Tesseract language data found"
-    fi
 else
     echo "⚠ WARNING: Tesseract OCR not found - image processing will be disabled"
 fi
 
 # Check libmagic
-if ldconfig -p | grep -q libmagic; then
-    echo "✓ libmagic installed"
+if command -v ldconfig >/dev/null 2>&1; then
+    if ldconfig -p | grep -q libmagic; then
+        echo "✓ libmagic installed"
+    else
+        echo "⚠ WARNING: libmagic not found - file type detection may fall back to alternative methods"
+    fi
 else
-    echo "⚠ WARNING: libmagic not found - file type detection may fail"
+    echo "⚠ WARNING: ldconfig not found - skipping libmagic check"
 fi
 
 echo ""
@@ -35,5 +31,8 @@ echo "Starting application..."
 echo "================================"
 echo ""
 
+# Create required directories
+mkdir -p /app/logs /app/exports /app/temp_uploads
+
 # Start the application with dynamic port
-exec python -m uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers 4
+exec uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers 4
