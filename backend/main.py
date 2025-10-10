@@ -137,20 +137,13 @@ allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',')]
 if APP_ENV == "production" and ("http://localhost:5173" in allowed_origins or "http://localhost:3000" in allowed_origins):
     logger.warning("In production, but ALLOWED_ORIGINS is not set or is using default development values.")
 
-# Define allowed headers
-allowed_headers = [
-    "Content-Type",
-    "Authorization",
-    "X-Requested-With",
-    "X-Request-ID",
-]
-
+# Configure CORS using ALLOWED_ORIGINS (comma-separated). Default to development-friendly values.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-Requested-With", "X-Request-ID"],
 )
 
 # Initialize services
