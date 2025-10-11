@@ -113,7 +113,7 @@ class FileValidator:
                 )
 
             # Check if the extension matches the MIME type
-            if file_extension == ".pdf" and mime_type != "application/pdf":
+            if file_extension == ".pdf" and mime_type not in ["application/pdf", "application/octet-stream", "text/plain"]:
                 return FileValidationResult(
                     is_valid=False,
                     file_type="unknown",
@@ -122,7 +122,7 @@ class FileValidator:
                     error_message=f"File extension '{file_extension}' does not match MIME type '{mime_type}'"
                 )
             
-            if file_extension in {".jpg", ".jpeg"} and mime_type != "image/jpeg":
+            if file_extension in {".jpg", ".jpeg"} and mime_type not in ["image/jpeg", "application/octet-stream"]:
                 return FileValidationResult(
                     is_valid=False,
                     file_type="unknown",
@@ -131,7 +131,7 @@ class FileValidator:
                     error_message=f"File extension '{file_extension}' does not match MIME type '{mime_type}'"
                 )
 
-            if file_extension == ".png" and mime_type != "image/png":
+            if file_extension == ".png" and mime_type not in ["image/png", "application/octet-stream"]:
                 return FileValidationResult(
                     is_valid=False,
                     file_type="unknown",
@@ -140,7 +140,7 @@ class FileValidator:
                     error_message=f"File extension '{file_extension}' does not match MIME type '{mime_type}'"
                 )
 
-            file_type = "pdf" if "pdf" in mime_type else "image"
+            file_type = "pdf" if "pdf" in file_extension else "image"
             
             # Validate file content matches expected type
             if not self._validate_file_content(content, file_type):
@@ -219,7 +219,7 @@ class FileValidator:
             filename = name[:255-len(ext)] + ext
         
         # Ensure filename is not empty or just dots
-        if not filename or filename in ['.', '..'] or filename.startswith('.'):
+        if not filename or filename in ['.', '..']:
             return ""
         
         return filename
