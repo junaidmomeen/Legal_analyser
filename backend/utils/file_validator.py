@@ -28,7 +28,9 @@ class FileValidator:
             'image/png',
             'image/jpeg',
             'image/tiff',
-            'image/bmp'
+            'image/bmp',
+            'application/octet-stream',
+            'text/plain'
         }
     
     async def validate_file(self, file: UploadFile) -> FileValidationResult:
